@@ -1,0 +1,15 @@
+# Roblox
+*.rbxl.lock
+*.rbxlx.lock
+
+# Rojo
+rojo.toml.lock
+
+# Tool managers
+rokit.toml
+rokit.exe
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
