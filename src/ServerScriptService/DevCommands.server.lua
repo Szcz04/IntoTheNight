@@ -81,5 +81,25 @@ createCommand("/state", function(player)
 	print(string.format("[DevCommands] %s checked state: %s", player.Name, currentState))
 end, "Check game state")
 
+createCommand("/sequence", function(player)
+	local leverSequence = _G.LeverSequence
+	if leverSequence then
+		local sequence = leverSequence:GetCorrectSequence()
+		print(string.format("[DevCommands] %s checked sequence: %s", player.Name, table.concat(sequence, " → ")))
+	else
+		warn("[DevCommands] LeverSequence not available")
+	end
+end, "Show correct lever sequence")
+
+createCommand("/resetlevers", function(player)
+	local leverSequence = _G.LeverSequence
+	if leverSequence then
+		leverSequence:ResetAllProgress()
+		print(string.format("[DevCommands] %s reset all lever progress", player.Name))
+	else
+		warn("[DevCommands] LeverSequence not available")
+	end
+end, "Reset all lever progress")
+
 print("[DevCommands] All dev commands active!")
-print("Type command in chat: /startround /cutpower /restorepower /endround /timecheck /state")
+print("Type command in chat: /startround /cutpower /restorepower /endround /timecheck /state /sequence /resetlevers")

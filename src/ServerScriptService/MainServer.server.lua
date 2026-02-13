@@ -20,6 +20,8 @@ local GameState = require(ServerScriptService.GameState)
 local PowerManager = require(ServerScriptService.PowerManager)
 local LightingController = require(ServerScriptService.LightingController)
 local AudioController = require(ServerScriptService.AudioController)
+local TimerDisplay = require(ServerScriptService.TimerDisplay)
+local LeverSequence = require(ServerScriptService.LeverSequence)
 
 -- Initialize systems
 print("[MainServer] Initializing core systems...")
@@ -28,6 +30,8 @@ local gameState = GameState.new()
 local powerManager = PowerManager.new()
 local lightingController = LightingController.new(powerManager)
 local audioController = AudioController.new(powerManager)
+local timerDisplay = TimerDisplay.new(powerManager)
+local leverSequence = LeverSequence.new(powerManager, gameState)
 
 print("[MainServer] All systems initialized")
 
@@ -67,6 +71,7 @@ _G.GameState = gameState
 _G.GameStateModule = GameState -- Module with States enum
 _G.PowerManager = powerManager
 _G.PowerManagerModule = PowerManager -- Module with PowerStates enum
+_G.LeverSequence = leverSequence
 
 print("=== Server Ready ===")
 print("Test commands:")

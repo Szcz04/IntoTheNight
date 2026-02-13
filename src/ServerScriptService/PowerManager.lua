@@ -83,6 +83,22 @@ function PowerManager:RestorePower()
 	self:SetPowerState(PowerManager.PowerStates.ON)
 end
 
+-- Add penalty time (for wrong lever sequence, etc.)
+function PowerManager:AddPenaltyTime(seconds)
+	if self._powerState == PowerManager.PowerStates.OFF then
+		self._timeWithoutPower = self._timeWithoutPower + seconds
+		print(string.format("[PowerManager] Added %ds penalty. New time without power: %.1fs", 
+			seconds, self._timeWithoutPower))
+		
+		-- Immediately check if this puts us over the limit
+		if self._timeWithoutPower >= self._maxTimeWithoutPower then
+			print("[PowerManager] Penalty caused timeout!")
+			self.PowerTimeout:Fire()
+			self:_StopTimer()
+		end
+	end
+end
+
 -- Start the death timer
 function PowerManager:_StartTimer()
 	if self._timerRunning then
