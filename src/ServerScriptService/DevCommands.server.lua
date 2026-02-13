@@ -101,5 +101,91 @@ createCommand("/resetlevers", function(player)
 	end
 end, "Reset all lever progress")
 
+createCommand("/damagesanity", function(player, unfilteredMessage)
+	local sanityManager = _G.SanityManager
+	if sanityManager then
+		local amount = tonumber(string.match(unfilteredMessage, "%d+")) or 10
+		sanityManager:DamageSanity(player, amount)
+		print(string.format("[DevCommands] %s damaged sanity by %d", player.Name, amount))
+	else
+		warn("[DevCommands] SanityManager not available")
+	end
+end, "Damage sanity (usage: /damagesanity [amount])")
+
+createCommand("/healsanity", function(player, unfilteredMessage)
+	local sanityManager = _G.SanityManager
+	if sanityManager then
+		local amount = tonumber(string.match(unfilteredMessage, "%d+")) or 10
+		sanityManager:HealSanity(player, amount)
+		print(string.format("[DevCommands] %s healed sanity by %d", player.Name, amount))
+	else
+		warn("[DevCommands] SanityManager not available")
+	end
+end, "Heal sanity (usage: /healsanity [amount])")
+
+createCommand("/checksanity", function(player)
+	local sanityManager = _G.SanityManager
+	if sanityManager then
+		local sanity = sanityManager:GetSanity(player)
+		local level = sanityManager:GetLevel(player)
+		print(string.format("[DevCommands] %s sanity: %d (Level %d)", player.Name, sanity, level))
+	else
+		warn("[DevCommands] SanityManager not available")
+	end
+end, "Check your sanity level")
+
+createCommand("/checkmovement", function(player)
+	local movementTracker = _G.MovementTracker
+	if movementTracker then
+		local state = movementTracker:GetState(player)
+		local speed = movementTracker:GetSpeed(player)
+		local distance = movementTracker:GetDistanceMoved(player)
+		print(string.format("[DevCommands] %s movement: %s (%.1f studs/s, %.1f studs total)", 
+			player.Name, state, speed, distance))
+	else
+		warn("[DevCommands] MovementTracker not available")
+	end
+end, "Check your movement state")
+
+createCommand("/monitor", function(player, unfilteredMessage)
+	local movementTracker = _G.MovementTracker
+	if movementTracker then
+		local duration = tonumber(string.match(unfilteredMessage, "%d+")) or 10
+		movementTracker:StartMonitoring(player, duration)
+		print(string.format("[DevCommands] Started monitoring %s for %d seconds", player.Name, duration))
+	else
+		warn("[DevCommands] MovementTracker not available")
+	end
+end, "Monitor movement for X seconds (usage: /monitor [seconds])")
+
+createCommand("/runstats", function(player)
+	local movementTracker = _G.MovementTracker
+	if movementTracker then
+		local runDistance = movementTracker:GetRunDistance(player)
+		local isMonitoring = movementTracker:IsMonitoring(player)
+		print(string.format("[DevCommands] %s run distance: %.1f studs (monitoring: %s)", 
+			player.Name, runDistance, tostring(isMonitoring)))
+	else
+		warn("[DevCommands] MovementTracker not available")
+	end
+end, "Check distance ran during monitoring")
+
+createCommand("/whisper", function(player)
+	local whisperMonster = _G.WhisperMonster
+	if whisperMonster then
+		if whisperMonster:IsActive() then
+			warn(string.format("[DevCommands] Whisper event already active, ignoring %s's trigger", player.Name))
+		else
+			print(string.format("[DevCommands] %s triggered whisper event", player.Name))
+			-- Run in separate thread to avoid blocking command
+			task.spawn(function()
+				whisperMonster:TriggerWhisper()
+			end)
+		end
+	else
+		warn("[DevCommands] WhisperMonster not available")
+	end
+end, "Trigger whisper monster event")
+
 print("[DevCommands] All dev commands active!")
-print("Type command in chat: /startround /cutpower /restorepower /endround /timecheck /state /sequence /resetlevers")
+print("Type command in chat: /startround /cutpower /restorepower /endround /timecheck /state /sequence /resetlevers /damagesanity /healsanity /checksanity /checkmovement /monitor /runstats /whisper")

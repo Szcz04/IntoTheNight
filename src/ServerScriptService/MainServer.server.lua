@@ -22,6 +22,9 @@ local LightingController = require(ServerScriptService.LightingController)
 local AudioController = require(ServerScriptService.AudioController)
 local TimerDisplay = require(ServerScriptService.TimerDisplay)
 local LeverSequence = require(ServerScriptService.LeverSequence)
+local SanityManager = require(ServerScriptService.SanityManager)
+local MovementTracker = require(ServerScriptService.MovementTracker)
+local WhisperMonster = require(ServerScriptService.WhisperMonster)
 
 -- Initialize systems
 print("[MainServer] Initializing core systems...")
@@ -32,6 +35,9 @@ local lightingController = LightingController.new(powerManager)
 local audioController = AudioController.new(powerManager)
 local timerDisplay = TimerDisplay.new(powerManager)
 local leverSequence = LeverSequence.new(powerManager, gameState)
+local sanityManager = SanityManager.new(gameState)
+local movementTracker = MovementTracker.new()
+local whisperMonster = WhisperMonster.new(movementTracker, sanityManager)
 
 print("[MainServer] All systems initialized")
 
@@ -48,6 +54,7 @@ gameState.StateChanged.Event:Connect(function(newState, oldState)
 		-- Round ended: reset systems
 		print("[MainServer] Round ending...")
 		powerManager:Reset()
+		sanityManager:ResetAll()
 	end
 end)
 
@@ -72,6 +79,10 @@ _G.GameStateModule = GameState -- Module with States enum
 _G.PowerManager = powerManager
 _G.PowerManagerModule = PowerManager -- Module with PowerStates enum
 _G.LeverSequence = leverSequence
+_G.SanityManager = sanityManager
+_G.MovementTracker = movementTracker
+_G.MovementTrackerModule = MovementTracker -- Module with States enum
+_G.WhisperMonster = whisperMonster
 
 print("=== Server Ready ===")
 print("Test commands:")
