@@ -1,0 +1,988 @@
+--[[
+	InventorySystem: Complete client-side inventory solution
+	
+	Features:
+		- Grid-based UI (6x8) that slides from right
+		- Drag & drop with rotation (R key)
+		- Raycast item pickup (E key with white highlight)
+		- Blocks movement when inventory open
+]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local CollectionService = game:GetService("CollectionService")
+
+local ItemDefinitions = require(ReplicatedStorage.SharedModules.ItemDefinitions)
+
+local player = Players.LocalPlayer
+
+-- UI Configuration
+local GRID_WIDTH = 6
+local GRID_HEIGHT = 4
+local SLOT_SIZE = 60
+local SLOT_PADDING = 2
+local ANIMATION_TIME = 0.4
+
+-- Colors
+local COLOR_SLOT_EMPTY = Color3.fromRGB(30, 30, 35)
+local COLOR_SLOT_BORDER = Color3.fromRGB(50, 50, 60)
+local COLOR_BACKGROUND = Color3.fromRGB(20, 20, 25)
+local COLOR_VALID_PLACEMENT = Color3.fromRGB(50, 255, 50)
+local COLOR_INVALID_PLACEMENT = Color3.fromRGB(255, 50, 50)
+local HIGHLIGHT_COLOR = Color3.fromRGB(255, 255, 255)
+
+-- Pickup configuration
+local RAYCAST_DISTANCE = 10
+
+-- State
+local isOpen = false
+local items = {}
+local isDragging = false
+local draggedItemIndex = nil
+local draggedFrame = nil
+local dragOffset = Vector2.new(0, 0)
+local isRotated = false
+local ghostFrame = nil
+local highlightedItem = nil
+local highlight = nil
+local cursorUnlockLoop = nil -- Connection for cursor unlock loop
+local equippedItemId = nil -- Currently equipped item
+local dragFromEquipped = false -- Is drag from equipped slot?
+
+-- UI Elements
+local screenGui
+local container
+local gridContainer
+local itemContainer
+local equippedSlot
+local equippedItemFrame
+
+-- RemoteEvent/Function
+local remoteEvent
+local remoteFunction
+
+-- ========================================
+-- UI Creation
+-- ========================================
+
+local function createUI()
+	screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "InventoryUI"
+	screenGui.ResetOnSpawn = false
+	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screenGui.Enabled = true -- Explicitly enable
+	screenGui.DisplayOrder = 100 -- Put on top
+	screenGui.Parent = player:WaitForChild("PlayerGui")
+	
+	print(string.format("[InventorySystem] Created ScreenGui (Enabled=%s, Parent=%s)", tostring(screenGui.Enabled), tostring(screenGui.Parent)))
+	
+	container = Instance.new("Frame")
+	container.Name = "InventoryContainer"
+	container.AnchorPoint = Vector2.new(1, 0.5)
+	container.Position = UDim2.new(1.5, 0, 0.5, 0)
+	container.Size = UDim2.new(0, (SLOT_SIZE + SLOT_PADDING) * GRID_WIDTH + 40, 0, (SLOT_SIZE + SLOT_PADDING) * GRID_HEIGHT + 60)
+	container.BackgroundColor3 = COLOR_BACKGROUND
+	container.BorderSizePixel = 0
+	container.Parent = screenGui
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = container
+	
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.Position = UDim2.new(0, 20, 0, 10)
+	title.Size = UDim2.new(1, -40, 0, 30)
+	title.BackgroundTransparency = 1
+	title.Text = "EKWIPUNEK [B]"
+	title.TextColor3 = Color3.fromRGB(255, 255, 255)
+	title.TextSize = 18
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Font = Enum.Font.GothamBold
+	title.Parent = container
+	
+	gridContainer = Instance.new("Frame")
+	gridContainer.Name = "GridContainer"
+	gridContainer.Position = UDim2.new(0, 20, 0, 50)
+	gridContainer.Size = UDim2.new(0, (SLOT_SIZE + SLOT_PADDING) * GRID_WIDTH, 0, (SLOT_SIZE + SLOT_PADDING) * GRID_HEIGHT)
+	gridContainer.BackgroundTransparency = 1
+	gridContainer.Parent = container
+	
+	-- Create grid slots
+	for y = 1, GRID_HEIGHT do
+		for x = 1, GRID_WIDTH do
+			local slot = Instance.new("Frame")
+			slot.Name = string.format("Slot_%d_%d", x, y)
+			slot.Position = UDim2.new(0, (x - 1) * (SLOT_SIZE + SLOT_PADDING), 0, (y - 1) * (SLOT_SIZE + SLOT_PADDING))
+			slot.Size = UDim2.new(0, SLOT_SIZE, 0, SLOT_SIZE)
+			slot.BackgroundColor3 = COLOR_SLOT_EMPTY
+			slot.BorderSizePixel = 1
+			slot.BorderColor3 = COLOR_SLOT_BORDER
+			slot.Parent = gridContainer
+			
+			local slotCorner = Instance.new("UICorner")
+			slotCorner.CornerRadius = UDim.new(0, 4)
+			slotCorner.Parent = slot
+		end
+	end
+	
+	itemContainer = Instance.new("Frame")
+	itemContainer.Name = "ItemContainer"
+	itemContainer.Position = UDim2.new(0, 20, 0, 50)
+	itemContainer.Size = UDim2.new(0, (SLOT_SIZE + SLOT_PADDING) * GRID_WIDTH, 0, (SLOT_SIZE + SLOT_PADDING) * GRID_HEIGHT)
+	itemContainer.BackgroundTransparency = 1
+	itemContainer.ZIndex = 2
+	itemContainer.Parent = container
+	
+	-- Create equipped slot
+	local equippedSlotSize = SLOT_SIZE * 2 + SLOT_PADDING
+	
+	equippedSlot = Instance.new("Frame")
+	equippedSlot.Name = "EquippedSlot"
+	equippedSlot.Position = UDim2.new(0, (SLOT_SIZE + SLOT_PADDING) * GRID_WIDTH + 40, 0, 50)
+	equippedSlot.Size = UDim2.new(0, equippedSlotSize, 0, equippedSlotSize)
+	equippedSlot.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+	equippedSlot.BorderSizePixel = 2
+	equippedSlot.BorderColor3 = Color3.fromRGB(100, 150, 200)
+	equippedSlot.Parent = container
+	
+	local equippedCorner = Instance.new("UICorner")
+	equippedCorner.CornerRadius = UDim.new(0, 8)
+	equippedCorner.Parent = equippedSlot
+	
+	local equippedLabel = Instance.new("TextLabel")
+	equippedLabel.Name = "Label"
+	equippedLabel.Position = UDim2.new(0, 0, 1, 5)
+	equippedLabel.Size = UDim2.new(1, 0, 0, 20)
+	equippedLabel.BackgroundTransparency = 1
+	equippedLabel.Text = "EQUIPPED"
+	equippedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+	equippedLabel.TextSize = 12
+	equippedLabel.Font = Enum.Font.GothamBold
+	equippedLabel.Parent = equippedSlot
+	
+	-- Container needs to be wider now
+	container.Size = UDim2.new(0, (SLOT_SIZE + SLOT_PADDING) * GRID_WIDTH + equippedSlotSize + 80, 0, (SLOT_SIZE + SLOT_PADDING) * GRID_HEIGHT + 60)
+	
+	print("[InventorySystem] UI created with equipped slot")
+end
+
+-- ========================================
+-- UI Control
+-- ========================================
+
+local function openInventory()
+	if isOpen then return end
+	isOpen = true
+	
+	print("[InventorySystem] Opening inventory...")
+	
+	-- Force unlock cursor repeatedly (Roblox sometimes fights back)
+	if cursorUnlockLoop then
+		cursorUnlockLoop:Disconnect()
+	end
+	
+	cursorUnlockLoop = RunService.RenderStepped:Connect(function()
+		UserInputService.MouseIconEnabled = true
+		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+	end)
+	
+	print("[InventorySystem] Forcing cursor unlock (loop active)")
+	
+	local character = player.Character
+	if character then
+		local humanoid = character:FindFirstChild("Humanoid")
+		if humanoid then
+			humanoid.WalkSpeed = 0
+			print("[InventorySystem] Disabled character movement")
+		end
+	end
+	
+	local tween = TweenService:Create(container, TweenInfo.new(ANIMATION_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Position = UDim2.new(1, -20, 0.5, 0)
+	})
+	tween:Play()
+	
+	print("[InventorySystem] Opened")
+end
+
+local function closeInventory()
+	if not isOpen then return end
+	isOpen = false
+	
+	-- Stop forcing cursor unlock
+	if cursorUnlockLoop then
+		cursorUnlockLoop:Disconnect()
+		cursorUnlockLoop = nil
+	end
+	
+	-- Lock cursor back (first person mode)
+	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+	print("[InventorySystem] Cursor locked back")
+	
+	local character = player.Character
+	if character then
+		local humanoid = character:FindFirstChild("Humanoid")
+		if humanoid then
+			humanoid.WalkSpeed = 16
+		end
+	end
+	
+	local tween = TweenService:Create(container, TweenInfo.new(ANIMATION_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+		Position = UDim2.new(1.5, 0, 0.5, 0)
+	})
+	tween:Play()
+	
+	print("[InventorySystem] Closed")
+end
+
+local function toggleInventory()
+	if isOpen then
+		closeInventory()
+	else
+		openInventory()
+	end
+end
+
+-- ========================================
+-- Item Display
+-- ========================================
+
+local function createItemFrame(item, itemIndex)
+	local itemDef = ItemDefinitions.GetItem(item.itemId)
+	if not itemDef then return end
+	
+	local frame = Instance.new("Frame")
+	frame.Name = string.format("Item_%d", itemIndex)
+	frame.Position = UDim2.new(0, (item.x - 1) * (SLOT_SIZE + SLOT_PADDING), 0, (item.y - 1) * (SLOT_SIZE + SLOT_PADDING))
+	frame.Size = UDim2.new(0, item.width * SLOT_SIZE + (item.width - 1) * SLOT_PADDING, 0, item.height * SLOT_SIZE + (item.height - 1) * SLOT_PADDING)
+	frame.BackgroundColor3 = itemDef.Color
+	frame.BorderSizePixel = 2
+	frame.BorderColor3 = Color3.fromRGB(255, 255, 255)
+	frame.ZIndex = 3
+	frame.Parent = itemContainer
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = frame
+	
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = itemDef.Name
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextSize = 12
+	label.Font = Enum.Font.GothamBold
+	label.TextWrapped = true
+	label.ZIndex = 4
+	label.Parent = frame
+	
+	items[itemIndex] = frame
+end
+
+local function removeItemFrame(itemIndex)
+	local frame = items[itemIndex]
+	if frame then
+		frame:Destroy()
+		items[itemIndex] = nil
+	end
+end
+
+local function updateItemFrame(itemIndex, item)
+	local frame = items[itemIndex]
+	if not frame then return end
+	
+	frame.Position = UDim2.new(0, (item.x - 1) * (SLOT_SIZE + SLOT_PADDING), 0, (item.y - 1) * (SLOT_SIZE + SLOT_PADDING))
+	frame.Size = UDim2.new(0, item.width * SLOT_SIZE + (item.width - 1) * SLOT_PADDING, 0, item.height * SLOT_SIZE + (item.height - 1) * SLOT_PADDING)
+end
+
+local function clearAllItems()
+	for _, frame in pairs(items) do
+		frame:Destroy()
+	end
+	items = {}
+end
+
+-- ========================================
+-- Drag & Drop
+-- ========================================
+
+local function getGridPosition()
+	if not draggedFrame then return nil end
+	
+	local containerPos = itemContainer.AbsolutePosition
+	local mousePos = UserInputService:GetMouseLocation()
+	local relativePos = mousePos - containerPos
+	
+	local gridX = math.floor(relativePos.X / (SLOT_SIZE + SLOT_PADDING)) + 1
+	local gridY = math.floor(relativePos.Y / (SLOT_SIZE + SLOT_PADDING)) + 1
+	
+	if gridX < 1 or gridX > GRID_WIDTH or gridY < 1 or gridY > GRID_HEIGHT then
+		return nil
+	end
+	
+	return Vector2.new(gridX, gridY)
+end
+
+local function isMouseOverEquippedSlot()
+	if not equippedSlot then return false end
+	
+	local mousePos = UserInputService:GetMouseLocation()
+	local slotPos = equippedSlot.AbsolutePosition
+	local slotSize = equippedSlot.AbsoluteSize
+	
+	return mousePos.X >= slotPos.X and mousePos.X <= slotPos.X + slotSize.X and
+	       mousePos.Y >= slotPos.Y and mousePos.Y <= slotPos.Y + slotSize.Y
+end
+
+local function getItemAtPosition(mousePos)
+	-- Check equipped slot first
+	if equippedItemFrame then
+		local framePos = equippedItemFrame.AbsolutePosition
+		local frameSize = equippedItemFrame.AbsoluteSize
+		
+		if mousePos.X >= framePos.X and mousePos.X <= framePos.X + frameSize.X and
+		   mousePos.Y >= framePos.Y and mousePos.Y <= framePos.Y + frameSize.Y then
+			return "equipped", equippedItemFrame
+		end
+	end
+	
+	-- Check grid items
+	for index, frame in pairs(items) do
+		local framePos = frame.AbsolutePosition
+		local frameSize = frame.AbsoluteSize
+		
+		if mousePos.X >= framePos.X and mousePos.X <= framePos.X + frameSize.X and
+		   mousePos.Y >= framePos.Y and mousePos.Y <= framePos.Y + frameSize.Y then
+			return index, frame
+		end
+	end
+	
+	return nil, nil
+end
+
+local function createGhostPreview(sourceFrame)
+	if ghostFrame then
+		ghostFrame:Destroy()
+	end
+	
+	local ghost = sourceFrame:Clone()
+	ghost.Name = "GhostPreview"
+	ghost.ZIndex = 5
+	ghost.BackgroundTransparency = 0.5
+	ghost.Parent = sourceFrame.Parent
+	
+	ghostFrame = ghost
+end
+
+local function updateGhostPreview()
+	if not isDragging then return end
+	if not ghostFrame then 
+		print("[InventorySystem] Warning: ghostFrame is nil during drag")
+		return 
+	end
+	
+	-- Check if over equipped slot
+	if isMouseOverEquippedSlot() and not dragFromEquipped then
+		-- Check if item is equippable
+		local itemList = remoteFunction:InvokeServer("GetInventory")
+		if itemList and draggedItemIndex then
+			local item = itemList[draggedItemIndex]
+			if item then
+				local itemDef = ItemDefinitions.GetItem(item.itemId)
+				if itemDef and itemDef.IsEquippable then
+					ghostFrame.BorderColor3 = COLOR_VALID_PLACEMENT
+				else
+					ghostFrame.BorderColor3 = COLOR_INVALID_PLACEMENT
+				end
+			end
+		end
+		
+		-- Position ghost over equipped slot
+		local slotPos = equippedSlot.AbsolutePosition
+		local containerPos = itemContainer.AbsolutePosition
+		local relativePos = slotPos - containerPos
+		
+		ghostFrame.Position = UDim2.new(0, relativePos.X, 0, relativePos.Y)
+		ghostFrame.Size = UDim2.new(0, equippedSlot.AbsoluteSize.X, 0, equippedSlot.AbsoluteSize.Y)
+		ghostFrame.Visible = true
+		return
+	end
+	
+	-- Check grid position
+	local gridPos = getGridPosition()
+	
+	if gridPos then
+		if dragFromEquipped then
+			-- Dragging from equipped to grid
+			local equippedItemId = remoteFunction:InvokeServer("GetEquipped")
+			if equippedItemId then
+				local isValid = remoteFunction:InvokeServer("CanPlaceItem", equippedItemId, gridPos.X, gridPos.Y, false, nil)
+				
+				if isValid then
+					ghostFrame.BorderColor3 = COLOR_VALID_PLACEMENT
+				else
+					ghostFrame.BorderColor3 = COLOR_INVALID_PLACEMENT
+				end
+				
+				local itemDef = ItemDefinitions.GetItem(equippedItemId)
+				ghostFrame.Position = UDim2.new(0, (gridPos.X - 1) * (SLOT_SIZE + SLOT_PADDING), 0, (gridPos.Y - 1) * (SLOT_SIZE + SLOT_PADDING))
+				ghostFrame.Size = UDim2.new(0, itemDef.Width * SLOT_SIZE + (itemDef.Width - 1) * SLOT_PADDING, 0, itemDef.Height * SLOT_SIZE + (itemDef.Height - 1) * SLOT_PADDING)
+			end
+		else
+			-- Normal grid to grid
+			local itemList = remoteFunction:InvokeServer("GetInventory")
+			local item = itemList[draggedItemIndex]
+			if not item then return end
+			
+			local isValid = remoteFunction:InvokeServer("CanPlaceItem", item.itemId, gridPos.X, gridPos.Y, isRotated, draggedItemIndex)
+			
+			if isValid then
+				ghostFrame.BorderColor3 = COLOR_VALID_PLACEMENT
+			else
+				ghostFrame.BorderColor3 = COLOR_INVALID_PLACEMENT
+			end
+			
+			local itemDef = ItemDefinitions.GetItem(item.itemId)
+			local width = isRotated and itemDef.Height or itemDef.Width
+			local height = isRotated and itemDef.Width or itemDef.Height
+			
+			ghostFrame.Position = UDim2.new(0, (gridPos.X - 1) * (SLOT_SIZE + SLOT_PADDING), 0, (gridPos.Y - 1) * (SLOT_SIZE + SLOT_PADDING))
+			ghostFrame.Size = UDim2.new(0, width * SLOT_SIZE + (width - 1) * SLOT_PADDING, 0, height * SLOT_SIZE + (height - 1) * SLOT_PADDING)
+		end
+		
+		ghostFrame.Visible = true
+	else
+		ghostFrame.Visible = false
+	end
+end
+
+local function destroyGhostPreview()
+	if ghostFrame then
+		ghostFrame:Destroy()
+		ghostFrame = nil
+	end
+end
+
+local function tryStartDrag(input)
+	if not isOpen then return end
+	
+	local mousePos = Vector2.new(input.Position.X, input.Position.Y)
+	local itemIndex, itemFrame = getItemAtPosition(mousePos)
+	if not itemIndex then return end
+	
+	-- Check if dragging from equipped slot
+	if itemIndex == "equipped" then
+		dragFromEquipped = true
+		draggedItemIndex = nil
+	else
+		dragFromEquipped = false
+		draggedItemIndex = itemIndex
+	end
+	
+	isDragging = true
+	draggedFrame = itemFrame
+	isRotated = false
+	
+	-- Calculate offset from exact click position
+	local framePos = itemFrame.AbsolutePosition
+	dragOffset = mousePos - framePos
+	
+	-- If dragging from equipped slot, restore proper item size first
+	if dragFromEquipped then
+		local equippedItemId = remoteFunction:InvokeServer("GetEquipped")
+		if equippedItemId then
+			local itemDef = ItemDefinitions.GetItem(equippedItemId)
+			if itemDef then
+				-- Set to proper grid size
+				local properWidth = itemDef.Width * SLOT_SIZE + (itemDef.Width - 1) * SLOT_PADDING
+				local properHeight = itemDef.Height * SLOT_SIZE + (itemDef.Height - 1) * SLOT_PADDING
+				itemFrame.Size = UDim2.new(0, properWidth, 0, properHeight)
+			end
+		end
+		-- Move to itemContainer after resizing
+		itemFrame.Parent = itemContainer
+		
+		-- Recalculate offset after moving to new parent
+		local newFramePos = itemFrame.AbsolutePosition
+		dragOffset = mousePos - newFramePos
+	end
+	
+	itemFrame.ZIndex = 10
+	createGhostPreview(itemFrame)
+	
+	print(string.format("[InventorySystem] Started dragging (fromEquipped=%s, index=%s)", tostring(dragFromEquipped), tostring(itemIndex)))
+end
+
+local function stopDrag()
+	if not isDragging then return end
+	
+	local success = false
+	
+	-- Check if dropping battery onto flashlight (for charging)
+	local mousePos = UserInputService:GetMouseLocation()
+	local targetItemIndex, _ = getItemAtPosition(mousePos)
+	
+	if targetItemIndex and draggedItemIndex and targetItemIndex ~= draggedItemIndex then
+		-- Check if we're dropping battery on flashlight
+		local itemList = remoteFunction:InvokeServer("GetInventory")
+		if itemList then
+			local draggedItem = itemList[draggedItemIndex]
+			local targetItem = targetItemIndex == "equipped" and nil or itemList[targetItemIndex]
+			
+			-- Battery -> Flashlight in inventory
+			if draggedItem and draggedItem.itemId == "Battery" and targetItem and targetItem.itemId == "Flashlight" then
+				success = remoteFunction:InvokeServer("ChargeFlashlight", targetItemIndex, draggedItemIndex)
+				if success then
+					print("[InventorySystem] Charged flashlight in inventory")
+				else
+					print("[InventorySystem] Flashlight already fully charged or error")
+				end
+			-- Battery -> Equipped Flashlight
+			elseif draggedItem and draggedItem.itemId == "Battery" and targetItemIndex == "equipped" then
+				local equippedItemId = remoteFunction:InvokeServer("GetEquipped")
+				if equippedItemId == "Flashlight" then
+					success = remoteFunction:InvokeServer("ChargeFlashlight", "equipped", draggedItemIndex)
+					if success then
+						print("[InventorySystem] Charged equipped flashlight")
+					else
+						print("[InventorySystem] Flashlight already fully charged or error")
+					end
+				end
+			end
+		end
+	end
+	
+	-- If charging was attempted and successful, skip normal drag logic
+	if success then
+		-- Reset drag state
+		isDragging = false
+		draggedItemIndex = nil
+		dragFromEquipped = false
+		if draggedFrame then
+			draggedFrame.ZIndex = 3
+			draggedFrame = nil
+		end
+		if ghostFrame then
+			ghostFrame:Destroy()
+			ghostFrame = nil
+		end
+		return
+	end
+	
+	-- Determine where we're dropping
+	if isMouseOverEquippedSlot() and not dragFromEquipped then
+		-- Dropping into equipped slot from grid
+		if draggedItemIndex then
+			local itemList = remoteFunction:InvokeServer("GetInventory")
+			if itemList then
+				local item = itemList[draggedItemIndex]
+				if item then
+					local itemDef = ItemDefinitions.GetItem(item.itemId)
+					if itemDef and itemDef.IsEquippable then
+						-- Valid equippable item
+						success = remoteFunction:InvokeServer("EquipItem", draggedItemIndex)
+						if success then
+							print(string.format("[InventorySystem] Equipped item %d (%s)", draggedItemIndex, item.itemId))
+						end
+					else
+						print("[InventorySystem] Item is not equippable")
+					end
+				end
+			end
+		end
+	elseif dragFromEquipped then
+		-- Dropping from equipped slot to grid
+		local gridPos = getGridPosition()
+		if gridPos then
+			success = remoteFunction:InvokeServer("UnequipItem", gridPos.X, gridPos.Y)
+			if success then
+				print(string.format("[InventorySystem] Unequipped to (%d,%d)", gridPos.X, gridPos.Y))
+			end
+		end
+	else
+		-- Normal grid to grid movement
+		local gridPos = getGridPosition()
+		if gridPos and draggedItemIndex then
+			success = remoteFunction:InvokeServer("MoveItem", draggedItemIndex, gridPos.X, gridPos.Y, isRotated)
+			if success then
+				print(string.format("[InventorySystem] Placed item %d at (%d,%d)", draggedItemIndex, gridPos.X, gridPos.Y))
+			else
+				print("[InventorySystem] Invalid placement - snapping back")
+			end
+		end
+	end
+	
+	-- If move failed, snap back
+	if not success then
+		if dragFromEquipped then
+			-- Snap back to equipped slot
+			if draggedFrame and equippedSlot then
+				draggedFrame.Position = UDim2.new(0, 0, 0, 0)
+				draggedFrame.Size = UDim2.new(1, 0, 1, 0)
+				draggedFrame.Parent = equippedSlot
+				print("[InventorySystem] Snapped back to equipped slot")
+			end
+		else
+			-- Snap back to grid position
+			local itemList = remoteFunction:InvokeServer("GetInventory")
+			if itemList and draggedItemIndex then
+				local item = itemList[draggedItemIndex]
+				if item and draggedFrame then
+					draggedFrame.Parent = itemContainer
+					draggedFrame.Position = UDim2.new(0, (item.x - 1) * (SLOT_SIZE + SLOT_PADDING), 0, (item.y - 1) * (SLOT_SIZE + SLOT_PADDING))
+					draggedFrame.Size = UDim2.new(0, item.width * SLOT_SIZE + (item.width - 1) * SLOT_PADDING, 0, item.height * SLOT_SIZE + (item.height - 1) * SLOT_PADDING)
+					print("[InventorySystem] Snapped back to grid")
+				end
+			end
+		end
+	end
+	
+	-- Reset drag state
+	isDragging = false
+	draggedItemIndex = nil
+	dragFromEquipped = false
+	if draggedFrame then
+		draggedFrame.ZIndex = 3
+		draggedFrame = nil
+	end
+	
+	-- Destroy ghost AFTER resetting state
+	destroyGhostPreview()
+	
+	print("[InventorySystem] Drag ended, ghost destroyed")
+end
+
+local function updateDrag()
+	if not draggedFrame then return end
+	
+	local mousePos = UserInputService:GetMouseLocation()
+	
+	-- Position frame so click point stays at cursor
+	local targetPos = mousePos - dragOffset
+	
+	-- Make relative to container
+	local containerPos = itemContainer.AbsolutePosition
+	local relativePos = targetPos - containerPos
+	
+	draggedFrame.Position = UDim2.new(0, relativePos.X, 0, relativePos.Y)
+	
+	updateGhostPreview()
+end
+
+local function tryRotate()
+	if not isDragging then return end
+	
+	isRotated = not isRotated
+	updateGhostPreview()
+	
+	print(string.format("[InventorySystem] Rotated item, isRotated=%s", tostring(isRotated)))
+end
+
+-- Try to drop item (right click)
+local function tryDropItem(input)
+	local mousePos = Vector2.new(input.Position.X, input.Position.Y)
+	local itemIndex, itemFrame = getItemAtPosition(mousePos)
+	
+	if not itemIndex then return end
+	
+	-- Ask server to drop item
+	local success = remoteFunction:InvokeServer("DropItem", itemIndex)
+	
+	if success then
+		print(string.format("[InventorySystem] Dropped item %d", itemIndex))
+	else
+		warn("[InventorySystem] Failed to drop item")
+	end
+end
+
+-- Display equipped item
+local function updateEquippedDisplay(itemId)
+	-- Unequip previous item (if any)
+	if equippedItemId and equippedItemId == "Flashlight" then
+		-- Send event to unequip flashlight
+		remoteEvent:FireServer("UnequipFlashlight")
+		print("[InventorySystem] Sent unequip flashlight request")
+	end
+	
+	-- Remove old equipped item frame
+	if equippedItemFrame then
+		equippedItemFrame:Destroy()
+		equippedItemFrame = nil
+	end
+	
+	equippedItemId = itemId
+	
+	if not itemId then return end
+	
+	local itemDef = ItemDefinitions.GetItem(itemId)
+	if not itemDef then return end
+	
+	-- Create item display in equipped slot
+	local frame = Instance.new("Frame")
+	frame.Name = "EquippedItem"
+	frame.Position = UDim2.new(0, 0, 0, 0)
+	frame.Size = UDim2.new(1, 0, 1, 0)
+	frame.BackgroundColor3 = itemDef.Color
+	frame.BorderSizePixel = 0
+	frame.ZIndex = 3
+	frame.Parent = equippedSlot
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = frame
+	
+	local label = Instance.new("TextLabel")
+	label.Position = UDim2.new(0, 5, 0, 5)
+	label.Size = UDim2.new(1, -10, 1, -10)
+	label.BackgroundTransparency = 1
+	label.Text = itemDef.Name
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextSize = 14
+	label.Font = Enum.Font.GothamBold
+	label.TextWrapped = true
+	label.TextYAlignment = Enum.TextYAlignment.Center
+	label.Parent = frame
+	
+	equippedItemFrame = frame
+	
+	print(string.format("[InventorySystem] Updated equipped display: %s", itemId))
+	
+	-- Equip flashlight if it's the equipped item
+	if itemId == "Flashlight" then
+		remoteEvent:FireServer("EquipFlashlight")
+		print("[InventorySystem] Sent equip flashlight request")
+	end
+end
+
+-- ========================================
+-- Item Pickup
+-- ========================================
+
+local function isPickupItem(part)
+	-- Check if the part itself has the tag
+	if CollectionService:HasTag(part, "ItemPickup") then
+		local itemId = part:GetAttribute("ItemId")
+		if itemId and ItemDefinitions.IsValidItem(itemId) then
+			return true, part
+		end
+	end
+	
+	-- Check if the parent (Model) has the tag
+	local parent = part.Parent
+	if parent and parent:IsA("Model") and CollectionService:HasTag(parent, "ItemPickup") then
+		local itemId = parent:GetAttribute("ItemId")
+		if itemId and ItemDefinitions.IsValidItem(itemId) then
+			return true, parent
+		end
+	end
+	
+	return false, nil
+end
+
+local function highlightItem(item)
+	if highlightedItem == item then return end
+	
+	clearHighlight()
+	
+	highlightedItem = item
+	
+	highlight = Instance.new("Highlight")
+	highlight.FillTransparency = 1
+	highlight.OutlineColor = HIGHLIGHT_COLOR
+	highlight.OutlineTransparency = 0
+	highlight.Parent = item
+end
+
+function clearHighlight()
+	if highlight then
+		highlight:Destroy()
+		highlight = nil
+	end
+	highlightedItem = nil
+end
+
+local function updateRaycast()
+	local character = player.Character
+	if not character then return end
+	
+	local camera = workspace.CurrentCamera
+	if not camera then return end
+	
+	local rayOrigin = camera.CFrame.Position
+	local rayDirection = camera.CFrame.LookVector * RAYCAST_DISTANCE
+	
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	raycastParams.FilterDescendantsInstances = {character}
+	
+	local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+	
+	if raycastResult then
+		local hitPart = raycastResult.Instance
+		
+		local isItem, itemObject = isPickupItem(hitPart)
+		if isItem then
+			highlightItem(itemObject)
+			return
+		end
+	end
+	
+	clearHighlight()
+end
+
+local function findAvailableSlot(itemId, isRot)
+	local itemDef = ItemDefinitions.GetItem(itemId)
+	if not itemDef then return nil, nil end
+	
+	local width = isRot and itemDef.Height or itemDef.Width
+	local height = isRot and itemDef.Width or itemDef.Height
+	
+	for y = 1, GRID_HEIGHT - height + 1 do
+		for x = 1, GRID_WIDTH - width + 1 do
+			local canPlace = remoteFunction:InvokeServer("CanPlaceItem", itemId, x, y, isRot)
+			if canPlace then
+				return x, y
+			end
+		end
+	end
+	
+	return nil, nil
+end
+
+local function tryPickup()
+	if not highlightedItem then return end
+	
+	local itemId = highlightedItem:GetAttribute("ItemId")
+	if not itemId then return end
+	
+	-- Get full path to world item for server validation
+	local worldItemPath = highlightedItem:GetFullName()
+	
+	-- Send pickup request - server will handle removal and inventory add atomically
+	local success = remoteFunction:InvokeServer("PickupItem", worldItemPath)
+	
+	if success then
+		print(string.format("[InventorySystem] Picked up %s", itemId))
+		clearHighlight()
+	else
+		warn("[InventorySystem] Failed to pick up " .. itemId)
+	end
+end
+
+-- ========================================
+-- Server Communication
+-- ========================================
+
+local function requestInventory()
+	if not remoteFunction then return end
+	
+	local success, itemList = pcall(function()
+		return remoteFunction:InvokeServer("GetInventory")
+	end)
+	
+	if success and itemList then
+		for index, item in ipairs(itemList) do
+			createItemFrame(item, index)
+		end
+	end
+end
+
+local function setupServerListeners()
+	remoteEvent.OnClientEvent:Connect(function(action, ...)
+		if action == "InventoryUpdated" then
+			-- Full refresh with equipped item
+			local itemList, equippedItemId = ...
+			clearAllItems()
+			if itemList then
+				for index, item in ipairs(itemList) do
+					createItemFrame(item, index)
+				end
+			end
+			updateEquippedDisplay(equippedItemId)
+		elseif action == "InventoryCleared" then
+			clearAllItems()
+		end
+	end)
+end
+
+-- ========================================
+-- Input Setup
+-- ========================================
+
+local function setupInput()
+	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		-- Debug: log B key presses
+		if input.KeyCode == Enum.KeyCode.B then
+			print(string.format("[InventorySystem] B key detected (gameProcessed=%s)", tostring(gameProcessed)))
+		end
+		
+		if gameProcessed then return end
+		
+		if input.KeyCode == Enum.KeyCode.B then
+			print("[InventorySystem] B key pressed - toggling inventory")
+			toggleInventory()
+		elseif input.KeyCode == Enum.KeyCode.R then
+			tryRotate()
+		elseif input.KeyCode == Enum.KeyCode.E then
+			tryPickup()
+		elseif input.UserInputType == Enum.UserInputType.MouseButton1 then
+			tryStartDrag(input)
+		elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+			-- Right click to drop item
+			if isOpen then
+				tryDropItem(input)
+			end
+		end
+	end)
+	
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			stopDrag()
+		end
+	end)
+	
+	RunService.RenderStepped:Connect(function()
+		if isDragging then
+			updateDrag()
+		else
+			updateRaycast()
+		end
+	end)
+	
+	print("[InventorySystem] Input listeners active")
+end
+
+-- ========================================
+-- Initialization
+-- ========================================
+
+createUI()
+setupInput()
+
+-- Connect to server
+task.spawn(function()
+	remoteEvent = ReplicatedStorage:WaitForChild("InventoryEvent", 10)
+	remoteFunction = ReplicatedStorage:WaitForChild("InventoryFunction", 10)
+	
+	if not remoteEvent or not remoteFunction then
+		warn("[InventorySystem] Failed to connect to server")
+		return
+	end
+	
+	setupServerListeners()
+	requestInventory()
+	
+	-- Request equipped item
+	local equippedItemId = remoteFunction:InvokeServer("GetEquipped")
+	if equippedItemId then
+		updateEquippedDisplay(equippedItemId)
+	end
+	
+	print("[InventorySystem] Connected to server")
+end)
+
+print("[InventorySystem] Inventory system initialized")

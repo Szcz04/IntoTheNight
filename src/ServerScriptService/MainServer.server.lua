@@ -25,6 +25,7 @@ local LeverSequence = require(ServerScriptService.LeverSequence)
 local SanityManager = require(ServerScriptService.SanityManager)
 local MovementTracker = require(ServerScriptService.MovementTracker)
 local WhisperMonster = require(ServerScriptService.WhisperMonster)
+local InventoryManager = require(ServerScriptService.InventoryManager)
 
 -- Initialize systems
 print("[MainServer] Initializing core systems...")
@@ -38,6 +39,7 @@ local leverSequence = LeverSequence.new(powerManager, gameState)
 local sanityManager = SanityManager.new(gameState)
 local movementTracker = MovementTracker.new()
 local whisperMonster = WhisperMonster.new(movementTracker, sanityManager)
+local inventoryManager = InventoryManager.new()
 
 print("[MainServer] All systems initialized")
 
@@ -83,6 +85,24 @@ _G.SanityManager = sanityManager
 _G.MovementTracker = movementTracker
 _G.MovementTrackerModule = MovementTracker -- Module with States enum
 _G.WhisperMonster = whisperMonster
+_G.InventoryManager = inventoryManager
+
+-- Setup flashlight equip/unequip events
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local inventoryEvent = ReplicatedStorage:WaitForChild("InventoryEvent")
+
+inventoryEvent.OnServerEvent:Connect(function(player, action, ...)
+	if action == "EquipFlashlight" then
+		-- Broadcast to this player (for FlashlightEquip.client.lua)
+		inventoryEvent:FireClient(player, "EquipFlashlight")
+		print(string.format("[MainServer] %s equipped flashlight", player.Name))
+		
+	elseif action == "UnequipFlashlight" then
+		-- Broadcast to this player
+		inventoryEvent:FireClient(player, "UnequipFlashlight")
+		print(string.format("[MainServer] %s unequipped flashlight", player.Name))
+	end
+end)
 
 print("=== Server Ready ===")
 print("Test commands:")

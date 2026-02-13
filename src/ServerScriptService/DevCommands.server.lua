@@ -187,5 +187,30 @@ createCommand("/whisper", function(player)
 	end
 end, "Trigger whisper monster event")
 
+createCommand("/giveitems", function(player)
+	local inventoryManager = _G.InventoryManager
+	if inventoryManager then
+		-- Give a variety of items for testing
+		inventoryManager:AddItem(player, "Lockpick", 1, 1, false)
+		inventoryManager:AddItem(player, "Battery", 2, 1, false)
+		inventoryManager:AddItem(player, "Key", 3, 1, false)
+		inventoryManager:AddItem(player, "Flashlight", 1, 2, false)
+		inventoryManager:AddItem(player, "Medkit", 4, 2, false)
+		print(string.format("[DevCommands] Gave test items to %s", player.Name))
+	else
+		warn("[DevCommands] InventoryManager not available")
+	end
+end, "Add test items to inventory")
+
+createCommand("/clearinventory", function(player)
+	local inventoryManager = _G.InventoryManager
+	if inventoryManager then
+		inventoryManager:ClearInventory(player)
+		print(string.format("[DevCommands] Cleared inventory for %s", player.Name))
+	else
+		warn("[DevCommands] InventoryManager not available")
+	end
+end, "Clear all items from inventory")
+
 print("[DevCommands] All dev commands active!")
-print("Type command in chat: /startround /cutpower /restorepower /endround /timecheck /state /sequence /resetlevers /damagesanity /healsanity /checksanity /checkmovement /monitor /runstats /whisper")
+print("Type command in chat: /startround /cutpower /restorepower /endround /timecheck /state /sequence /resetlevers /damagesanity /healsanity /checksanity /checkmovement /monitor /runstats /whisper /giveitems /clearinventory")
