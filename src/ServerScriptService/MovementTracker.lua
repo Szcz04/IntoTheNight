@@ -228,8 +228,8 @@ function MovementTracker:_UpdatePlayerMovement(data, deltaTime, currentTime)
 		-- Fire state change event
 		self.MovementStateChanged:Fire(data.player, newState, oldState)
 		
-		print(string.format("[MovementTracker] %s movement: %s → %s (%.1f studs/s)", 
-			data.player.Name, oldState, newState, data.speed))
+		--print(string.format("[MovementTracker] %s movement: %s → %s (%.1f studs/s)", 
+		--	data.player.Name, oldState, newState, data.speed))
 	end
 	
 	-- Update last position

@@ -49,6 +49,15 @@ function LeverSequence.new(powerManager, gameState)
 		self:_OnPowerStateChanged(newState, oldState)
 	end)
 	
+	-- CRITICAL FIX: Clean up player progress when players leave (prevent memory leak)
+	local Players = game:GetService("Players")
+	Players.PlayerRemoving:Connect(function(player)
+		if self._playerProgress[player.UserId] then
+			self._playerProgress[player.UserId] = nil
+			print(string.format("[LeverSequence] Cleaned up progress for %s", player.Name))
+		end
+	end)
+	
 	print("[LeverSequence] Lever system initialized with", #self._levers, "levers")
 	
 	return self

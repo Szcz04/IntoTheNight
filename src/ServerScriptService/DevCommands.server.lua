@@ -212,5 +212,55 @@ createCommand("/clearinventory", function(player)
 	end
 end, "Clear all items from inventory")
 
+createCommand("/spawnflashlight", function(player)
+	local inventoryManager = _G.InventoryManager
+	if inventoryManager then
+		inventoryManager:SpawnItemAtPlayer(player, "Flashlight")
+		print(string.format("[DevCommands] Spawned Flashlight for %s", player.Name))
+	else
+		warn("[DevCommands] InventoryManager not available")
+	end
+end, "Spawn a flashlight in front of you")
+
+createCommand("/spawnbattery", function(player)
+	local inventoryManager = _G.InventoryManager
+	if inventoryManager then
+		inventoryManager:SpawnItemAtPlayer(player, "Battery")
+		print(string.format("[DevCommands] Spawned Battery for %s", player.Name))
+	else
+		warn("[DevCommands] InventoryManager not available")
+	end
+end, "Spawn a battery in front of you")
+
+createCommand("/spawnkey", function(player)
+	local inventoryManager = _G.InventoryManager
+	if inventoryManager then
+		inventoryManager:SpawnItemAtPlayer(player, "Key")
+		print(string.format("[DevCommands] Spawned Key for %s", player.Name))
+	else
+		warn("[DevCommands] InventoryManager not available")
+	end
+end, "Spawn a key in front of you")
+
+createCommand("/spawnmedkit", function(player)
+	local inventoryManager = _G.InventoryManager
+	if inventoryManager then
+		inventoryManager:SpawnItemAtPlayer(player, "Medkit")
+		print(string.format("[DevCommands] Spawned Medkit for %s", player.Name))
+	else
+		warn("[DevCommands] InventoryManager not available")
+	end
+end, "Spawn a medkit in front of you")
+
+createCommand("/spawnlockpick", function(player)
+	local inventoryManager = _G.InventoryManager
+	if inventoryManager then
+		inventoryManager:SpawnItemAtPlayer(player, "Lockpick")
+		print(string.format("[DevCommands] Spawned Lockpick for %s", player.Name))
+	else
+		warn("[DevCommands] InventoryManager not available")
+	end
+end, "Spawn a lockpick in front of you")
+
 print("[DevCommands] All dev commands active!")
-print("Type command in chat: /startround /cutpower /restorepower /endround /timecheck /state /sequence /resetlevers /damagesanity /healsanity /checksanity /checkmovement /monitor /runstats /whisper /giveitems /clearinventory")
+print("Type command in chat: /startround /cutpower /restorepower /endround /timecheck /state /sequence /resetlevers /damagesanity /healsanity /checksanity /checkmovement /monitor /runstats /whisper /giveitems /clearinventory /spawnflashlight /spawnbattery /spawnkey /spawnmedkit /spawnlockpick")

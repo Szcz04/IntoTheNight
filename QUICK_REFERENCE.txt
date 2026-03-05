@@ -1,0 +1,395 @@
+════════════════════════════════════════════════════════════════
+QUICK REFERENCE - Tworzenie nowych systemów
+════════════════════════════════════════════════════════════════
+
+📋 CHECKLIST - O CZYM PAMIĘTAĆ
+
+┌─────────────────────────────────────────────────────────────┐
+│ 1. STRUKTURA MODUŁU                                          │
+└─────────────────────────────────────────────────────────────┘
+
+✓ Services na górze (Players, ReplicatedStorage, etc.)
+✓ Dependencies (require innych modułów)
+✓ Module table z __index metatable
+✓ Enums/Constants przed konstruktorem
+✓ Konstruktor .new() przyjmuje dependencies
+✓ Private methods z prefix _ (np. _OnPlayerAdded)
+✓ Public methods bez _ (np. GetState, Activate)
+✓ return ModuleName na końcu
+
+┌─────────────────────────────────────────────────────────────┐
+│ 2. W KONSTRUKTORZE (.new)                                    │
+└─────────────────────────────────────────────────────────────┘
+
+✓ local self = setmetatable({}, ModuleName)
+✓ Store dependencies (self._gameState, self._powerManager, etc.)
+✓ Initialize state (self._objects = {}, self._playerData = {})
+✓ Create events (self.EventName = Instance.new("BindableEvent"))
+✓ Create RemoteEvent/RemoteFunction (jeśli client-server)
+✓ Setup listeners (Players, CollectionService, dependencies)
+✓ Discover existing objects (CollectionService:GetTagged)
+✓ return self
+
+┌─────────────────────────────────────────────────────────────┐
+│ 3. PLAYER LISTENERS (zawsze!)                                │
+└─────────────────────────────────────────────────────────────┘
+
+function System:_SetupPlayerListeners()
+    Players.PlayerAdded:Connect(function(player)
+        self:_OnPlayerAdded(player)
+    end)
+    
+    Players.PlayerRemoving:Connect(function(player)
+        self:_OnPlayerRemoving(player)  -- CRITICAL: Czyść dane!
+    end)
+    
+    -- Initialize existing players
+    for _, player in Players:GetPlayers() do
+        self:_OnPlayerAdded(player)
+    end
+end
+
+function System:_OnPlayerRemoving(player)
+    -- ZAWSZE czyść player data aby uniknąć memory leaks
+    self._playerData[player.UserId] = nil
+end
+
+┌─────────────────────────────────────────────────────────────┐
+│ 4. COLLECTIONSERVICE (dla obiektów w workspace)              │
+└─────────────────────────────────────────────────────────────┘
+
+-- Setup listeners dla dynamicznych obiektów
+CollectionService:GetInstanceAddedSignal("MyTag"):Connect(function(instance)
+    self:_RegisterObject(instance)
+end)
+
+CollectionService:GetInstanceRemovedSignal("MyTag"):Connect(function(instance)
+    self:_UnregisterObject(instance)
+end)
+
+-- Discover existing tagged objects
+local tagged = CollectionService:GetTagged("MyTag")
+for _, instance in ipairs(tagged) do
+    self:_RegisterObject(instance)
+end
+
+┌─────────────────────────────────────────────────────────────┐
+│ 5. CLIENT-SERVER KOMUNIKACJA                                 │
+└─────────────────────────────────────────────────────────────┘
+
+REMOTEEVENT (jednostronna, bez return value):
+════════════════════════════════════════════════════════════════
+
+-- SERVER:
+self._remoteEvent = ReplicatedStorage:FindFirstChild("MyEvent") or Instance.new("RemoteEvent")
+self._remoteEvent.Parent = ReplicatedStorage
+
+self._remoteEvent.OnServerEvent:Connect(function(player, action, ...)
+    if action == "DoSomething" then
+        -- handle
+    end
+end)
+
+-- Fire to client:
+self._remoteEvent:FireClient(player, "UpdateData", someData)
+self._remoteEvent:FireAllClients("GlobalEvent", data)
+
+-- CLIENT:
+local remoteEvent = ReplicatedStorage:WaitForChild("MyEvent")
+
+-- Send to server:
+remoteEvent:FireServer("DoSomething", arg1, arg2)
+
+-- Receive from server:
+remoteEvent.OnClientEvent:Connect(function(action, ...)
+    if action == "UpdateData" then
+        local data = ...
+        -- handle
+    end
+end)
+
+────────────────────────────────────────────────────────────────
+
+REMOTEFUNCTION (request-response, MUSI zwrócić wartość!):
+════════════════════════════════════════════════════════════════
+
+-- SERVER:
+self._remoteFunction = ReplicatedStorage:FindFirstChild("MyFunction") or Instance.new("RemoteFunction")
+self._remoteFunction.Parent = ReplicatedStorage
+
+self._remoteFunction.OnServerInvoke = function(player, action, ...)
+    if action == "GetData" then
+        return someData  -- MUST return!
+    end
+    return nil
+end
+
+-- CLIENT:
+local remoteFunction = ReplicatedStorage:WaitForChild("MyFunction")
+
+-- Call server and wait for response:
+local result = remoteFunction:InvokeServer("GetData", arg1)
+
+┌─────────────────────────────────────────────────────────────┐
+│ 6. EVENTY (dla innych systemów)                              │
+└─────────────────────────────────────────────────────────────┘
+
+-- W konstruktorze:
+self.StateChanged = Instance.new("BindableEvent")
+self.ObjectActivated = Instance.new("BindableEvent")
+
+-- Fire event:
+self.StateChanged:Fire(newState, oldState)
+
+-- Inne systemy mogą nasłuchiwać:
+mySystem.StateChanged.Event:Connect(function(newState, oldState)
+    print("State changed:", oldState, "→", newState)
+end)
+
+┌─────────────────────────────────────────────────────────────┐
+│ 7. DEPENDENCY LISTENERS (reagowanie na inne systemy)         │
+└─────────────────────────────────────────────────────────────┘
+
+-- GameState changes:
+self._gameState.StateChanged.Event:Connect(function(newState, oldState)
+    if newState == GameState.States.RUNNING then
+        self:OnRoundStart()
+    elseif newState == GameState.States.ENDING then
+        self:OnRoundEnd()
+    end
+end)
+
+-- PowerManager changes:
+self._powerManager.PowerStateChanged.Event:Connect(function(newState, oldState)
+    if newState == PowerManager.PowerStates.OFF then
+        self:OnBlackout()
+    else
+        self:OnPowerRestored()
+    end
+end)
+
+┌─────────────────────────────────────────────────────────────┐
+│ 8. ATTRIBUTES (do przechowywania danych na instancjach)      │
+└─────────────────────────────────────────────────────────────┘
+
+-- SET attribute:
+instance:SetAttribute("MyData", "SomeValue")
+instance:SetAttribute("NumberValue", 42)
+instance:SetAttribute("BoolValue", true)
+
+-- GET attribute:
+local value = instance:GetAttribute("MyData")
+
+-- CHECK if exists:
+if instance:GetAttribute("MyData") then
+    -- exists
+end
+
+-- LISTEN to changes:
+instance:GetAttributeChangedSignal("MyData"):Connect(function()
+    local newValue = instance:GetAttribute("MyData")
+    print("MyData changed to:", newValue)
+end)
+
+UŻYCIE W PROJEKCIE:
+- ContainerSpawn → "ContainerType", "LootTable", "SpawnId"
+- Levers → "LeverNumber", "enabled"
+- Items → "ItemId", "ItemUUID", "ChargeUUID"
+
+┌─────────────────────────────────────────────────────────────┐
+│ 9. VALIDATION PATTERNS                                       │
+└─────────────────────────────────────────────────────────────┘
+
+-- Check if player still exists (może wyjść):
+if not player or not player.Parent then
+    warn("Player left")
+    return
+end
+
+-- Check if character exists:
+local character = player.Character
+if not character then
+    return
+end
+
+-- Check if humanoid alive:
+local humanoid = character:FindFirstChild("Humanoid")
+if not humanoid or humanoid.Health <= 0 then
+    return
+end
+
+-- Check if instance valid:
+if not instance or not instance.Parent then
+    warn("Instance destroyed")
+    return
+end
+
+┌─────────────────────────────────────────────────────────────┐
+│ 10. COMMON PATTERNS                                          │
+└─────────────────────────────────────────────────────────────┘
+
+═══ FIND OR CREATE ═══════════════════════════════════════════
+
+local myObject = parent:FindFirstChild("MyObject")
+if not myObject then
+    myObject = Instance.new("Part")
+    myObject.Name = "MyObject"
+    myObject.Parent = parent
+end
+
+═══ WEIGHTED RANDOM (loot tables) ═══════════════════════════
+
+local items = {
+    {id = "ItemA", weight = 30},
+    {id = "ItemB", weight = 50},
+    {id = "ItemC", weight = 20}
+}
+
+local totalWeight = 0
+for _, item in ipairs(items) do
+    totalWeight = totalWeight + item.weight
+end
+
+local roll = math.random() * totalWeight
+local currentWeight = 0
+
+for _, item in ipairs(items) do
+    currentWeight = currentWeight + item.weight
+    if roll <= currentWeight then
+        return item.id  -- This is the winner!
+    end
+end
+
+═══ COOLDOWN TIMER ════════════════════════════════════════════
+
+local lastActivation = 0
+local cooldown = 5 -- seconds
+
+function CanActivate()
+    local now = tick()
+    if now - lastActivation < cooldown then
+        return false -- Still on cooldown
+    end
+    lastActivation = now
+    return true
+end
+
+═══ TWEEN ANIMATION ═══════════════════════════════════════════
+
+local TweenService = game:GetService("TweenService")
+
+local tweenInfo = TweenInfo.new(
+    0.5,                        -- Duration
+    Enum.EasingStyle.Quad,      -- Easing style
+    Enum.EasingDirection.Out    -- Easing direction
+)
+
+local tween = TweenService:Create(part, tweenInfo, {
+    Position = targetPosition,
+    Orientation = targetOrientation,
+    Transparency = 0.5
+})
+
+tween:Play()
+tween.Completed:Wait()  -- Wait for completion
+
+═══ DEBOUNCE (prevent spam clicks) ═══════════════════════════
+
+local debounce = false
+
+clickDetector.MouseClick:Connect(function(player)
+    if debounce then return end
+    debounce = true
+    
+    -- Do something
+    
+    task.wait(1) -- Wait before allowing next click
+    debounce = false
+end)
+
+┌─────────────────────────────────────────────────────────────┐
+│ 11. DEBUGGING                                                │
+└─────────────────────────────────────────────────────────────┘
+
+-- Comprehensive logging:
+print("[SystemName] Message")          -- Info
+warn("[SystemName] Warning message")   -- Warning
+error("[SystemName] Critical error")   -- Error (stops execution)
+
+-- Formatted strings:
+print(string.format("[SystemName] Player %s activated object %d", 
+    player.Name, objectId))
+
+-- Conditional logging (tylko w dev mode):
+local DEBUG = true
+if DEBUG then
+    print("[DEBUG] Detailed info:", data)
+end
+
+-- Test via global exposure (MainServer):
+_G.MySystem = mySystemInstance
+_G.MySystemModule = MySystemModule  -- For enums/static methods
+
+-- Then in console:
+_G.MySystem:Activate(game.Players.LocalPlayer, 1)
+print(_G.MySystem:GetState())
+
+┌─────────────────────────────────────────────────────────────┐
+│ 12. TESTING CHECKLIST                                        │
+└─────────────────────────────────────────────────────────────┘
+
+✓ System inicjalizuje się bez errorów
+✓ CollectionService znajduje tagged objects
+✓ Player join/leave nie powoduje memory leaków
+✓ Character respawn działa poprawnie
+✓ RemoteEvent/Function komunikacja działa (client → server → client)
+✓ Eventy są broadcast correctly
+✓ Reset działa poprawnie (nowa runda)
+✓ Edge cases: player leaves mid-interaction, object destroyed, etc.
+
+════════════════════════════════════════════════════════════════
+PRZYKŁADOWY WORKFLOW
+════════════════════════════════════════════════════════════════
+
+1. Stwórz nowy .lua file w ServerScriptService
+2. Copy szablon z TEMPLATE_NewSystem.lua
+3. Zmień nazwę modułu i opisz cel
+4. Zdefiniuj enums i constants
+5. Napisz konstruktor (.new)
+6. Dodaj setup listeners (Players, CollectionService)
+7. Napisz _OnPlayerAdded i _OnPlayerRemoving
+8. Dodaj metody do obsługi obiektów
+9. Dodaj public API dla innych systemów
+10. Dodaj do MainServer.server.lua:
+    - require(ServerScriptService.YourSystem)
+    - local yourSystem = YourSystem.new(gameState)
+    - _G.YourSystem = yourSystem (dla testów)
+11. Testuj w Studio
+12. Dodaj client-side jeśli potrzebny
+
+════════════════════════════════════════════════════════════════
+INTEGRACJA Z OBECNYMI SYSTEMAMI
+════════════════════════════════════════════════════════════════
+
+GAMESTATE - nasłuchuj na zmiany rundy:
+    gameState.StateChanged → WAITING/RUNNING/ENDING
+
+POWERMANAGER - reaguj na blackout:
+    powerManager.PowerStateChanged → ON/OFF
+    powerManager:GetTimeRemaining()
+
+SANITYMANAGER - ModyfikUJ sanity:
+    sanityManager:DamageSanity(player, amount)
+    sanityManager:HealSanity(player, amount)
+
+INVENTORYMANAGER - Spawn items:
+    Zobacz _SpawnWorldItem() jako przykład
+    Tag: "ItemPickup", Attributes: "ItemId", "ItemUUID"
+
+MOVEMENTTRACKER - Check player movement:
+    movementTracker:GetState(player) → IDLE/SNEAKING/WALKING/RUNNING
+    movementTracker:GetSpeed(player)
+
+════════════════════════════════════════════════════════════════
+
+Powodzenia! 🚂💀

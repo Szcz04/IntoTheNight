@@ -1,5 +1,16 @@
 --[[
-	FlashlightEquip: Client-side flashlight equip system
+	⚠️ DEPRECATED - NIE UŻYWANY ⚠️
+	
+	Ten skrypt jest przestarzały i nie jest już używany.
+	Flashlight jest teraz zarządzany SERVER-SIDE przez:
+		- FlashlightController.lua (server)
+		- FlashlightClient.client.lua (client UI/sounds)
+	
+	Zachowany tylko do referencji. Można usunąć.
+	
+	---
+	
+	FlashlightEquip: Client-side flashlight equip system (OLD)
 	
 	Double-click on flashlight in inventory to equip/unequip
 	Left click to toggle light on/off

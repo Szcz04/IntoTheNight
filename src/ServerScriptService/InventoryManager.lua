@@ -13,8 +13,11 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local CollectionService = game:GetService("CollectionService")
 
 local ItemDefinitions = require(ReplicatedStorage.SharedModules.ItemDefinitions)
+local FlashlightController = require(script.Parent.FlashlightController)
 
 local InventoryManager = {}
 InventoryManager.__index = InventoryManager
@@ -31,6 +34,9 @@ function InventoryManager.new()
 	
 	-- World item charge tracking: {uuid = {charge = 0.5, timestamp = tick()}}
 	self._worldItemCharges = {}
+	
+	-- Flashlight controller (server-side)
+	self._flashlightController = FlashlightController.new()
 	
 	-- RemoteEvents for client communication
 	self._remoteEvent = ReplicatedStorage:FindFirstChild("InventoryEvent")
@@ -87,9 +93,56 @@ function InventoryManager.new()
 		end
 	end)
 	
+	-- Charge drain system for flashlights
+	RunService.Heartbeat:Connect(function(deltaTime)
+		self._flashlightController:ProcessChargeDrain(deltaTime)
+		
+		-- Sync equippedCharge with actual flashlight charge after drain
+		for userId, inventory in pairs(self._inventories) do
+			if inventory.equipped == "Flashlight" then
+				local player = Players:GetPlayerByUserId(userId)
+				if player then
+					local flashlightData = self._flashlightController:GetFlashlightData(player)
+					if flashlightData then
+						inventory.equippedCharge = flashlightData.charge
+					end
+				end
+			end
+		end
+	end)
+	
+	-- Initialize UUID for existing world items (for manual testing)
+	self:_InitializeExistingItems()
+	
 	print("[InventoryManager] Inventory system initialized (Grid: 6x8)")
 	
 	return self
+end
+
+-- Initialize UUID for existing items in world (for testing with manually placed items)
+function InventoryManager:_InitializeExistingItems()
+	local initialized = 0
+	local total = 0
+	
+	for _, item in CollectionService:GetTagged("ItemPickup") do
+		total = total + 1
+		-- Only initialize if item doesn't already have UUID
+		if not item:GetAttribute("ItemUUID") then
+			local uuid = HttpService:GenerateGUID(false)
+			item:SetAttribute("ItemUUID", uuid)
+			initialized = initialized + 1
+			print(string.format("[InventoryManager] ✓ Added UUID %s to %s (ItemId: %s)", uuid, item:GetFullName(), tostring(item:GetAttribute("ItemId"))))
+			
+			-- Also make sure ItemId exists
+			if not item:GetAttribute("ItemId") then
+				warn(string.format("[InventoryManager] Item %s has ItemPickup tag but no ItemId!", item:GetFullName()))
+			end
+		else
+			print(string.format("[InventoryManager] Item %s already has UUID: %s", item:GetFullName(), item:GetAttribute("ItemUUID")))
+		end
+	end
+	
+	print(string.format("[InventoryManager] Found %d items with ItemPickup tag, initialized %d UUIDs", total, initialized))
 end
 
 -- Initialize empty inventory for player
@@ -426,9 +479,25 @@ function InventoryManager:_SpawnWorldItem(itemId, cframe, charge)
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local ItemModels = ReplicatedStorage:FindFirstChild("ItemModels")
 		
-		if ItemModels then
+		print(string.format("[InventoryManager] Looking for model: %s", itemDef.WorldModel))
+		
+		if not ItemModels then
+			warn("[InventoryManager] ItemModels folder not found in ReplicatedStorage!")
+		else
+			print(string.format("[InventoryManager] ItemModels found. Children: %s", table.concat((function()
+				local names = {}
+				for _, child in ItemModels:GetChildren() do
+					table.insert(names, child.Name .. " (" .. child.ClassName .. ")")
+				end
+				return names
+			end)(), ", ")))
+			
 			local prefab = ItemModels:FindFirstChild(itemDef.WorldModel)
-			if prefab then
+			if not prefab then
+				warn(string.format("[InventoryManager] Prefab '%s' not found in ItemModels!", itemDef.WorldModel))
+			else
+				print(string.format("[InventoryManager] Found prefab: %s (%s)", prefab.Name, prefab.ClassName))
+				
 				-- Clone the prefab
 				worldItem = prefab:Clone()
 				worldItem:SetPrimaryPartCFrame(cframe)
@@ -445,7 +514,7 @@ function InventoryManager:_SpawnWorldItem(itemId, cframe, charge)
 					end
 				end
 				
-				print(string.format("[InventoryManager] Using prefab model for %s", itemId))
+				print(string.format("[InventoryManager] ✓ Using prefab model for %s", itemId))
 			end
 		end
 	end
@@ -461,10 +530,15 @@ function InventoryManager:_SpawnWorldItem(itemId, cframe, charge)
 	end
 	
 	-- Setup for pickup
+	-- Add unique UUID for identification (critical when multiple items have same name)
+	local itemUUID = HttpService:GenerateGUID(false)
+	
 	if worldItem:IsA("Model") then
-		-- Model: add tag and attribute to Model itself
-		game:GetService("CollectionService"):AddTag(worldItem, "ItemPickup")
+		-- Model: add tag and attributes to Model itself
+		CollectionService:AddTag(worldItem, "ItemPickup")
 		worldItem:SetAttribute("ItemId", itemId)
+		worldItem:SetAttribute("ItemUUID", itemUUID)
+		print(string.format("[InventoryManager] ✓ Assigned UUID %s to spawned %s (Model)", itemUUID, itemId))
 		
 		-- Enable physics on all parts
 		for _, part in worldItem:GetDescendants() do
@@ -477,8 +551,10 @@ function InventoryManager:_SpawnWorldItem(itemId, cframe, charge)
 		-- Part: enable physics
 		worldItem.Anchored = false
 		worldItem.CanCollide = true
-		game:GetService("CollectionService"):AddTag(worldItem, "ItemPickup")
+		CollectionService:AddTag(worldItem, "ItemPickup")
 		worldItem:SetAttribute("ItemId", itemId)
+		worldItem:SetAttribute("ItemUUID", itemUUID)
+		print(string.format("[InventoryManager] ✓ Assigned UUID %s to spawned %s (Part)", itemUUID, itemId))
 	end
 	
 	-- Store charge for items with charge (like flashlight)
@@ -533,11 +609,13 @@ function InventoryManager:EquipItem(player, itemIndex)
 	
 	print(string.format("[InventoryManager] %s equipped %s", player.Name, item.itemId))
 	
+	-- If flashlight, attach to character (server-side, visible to all!)
+	if item.itemId == "Flashlight" then
+		self._flashlightController:AttachFlashlight(player, item.charge or 0.5)
+	end
+	
 	-- Notify client with charge info
 	self._remoteEvent:FireClient(player, "InventoryUpdated", self:GetInventory(player), item.itemId)
-	if item.charge then
-		self._remoteEvent:FireClient(player, "FlashlightCharged", item.charge)
-	end
 	
 	return true
 end
@@ -580,6 +658,11 @@ function InventoryManager:UnequipItem(player, x, y)
 	table.insert(inventory.items, item)
 	self:_MarkGridSpace(inventory, item)
 	
+	-- If flashlight, remove from character
+	if itemId == "Flashlight" then
+		self._flashlightController:RemoveFlashlight(player)
+	end
+	
 	-- Clear equipped slot
 	inventory.equipped = nil
 	inventory.equippedCharge = nil
@@ -600,6 +683,28 @@ function InventoryManager:GetEquipped(player)
 	return inventory.equipped
 end
 
+-- Spawn item in world at player position (for dev commands)
+function InventoryManager:SpawnItemAtPlayer(player, itemId)
+	local character = player.Character
+	if not character then 
+		warn("[InventoryManager] Player has no character")
+		return false 
+	end
+	
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp then 
+		warn("[InventoryManager] Character has no HumanoidRootPart")
+		return false 
+	end
+	
+	-- Spawn 5 studs in front of player, 2 studs up
+	local spawnCFrame = hrp.CFrame * CFrame.new(0, 2, -5)
+	self:_SpawnWorldItem(itemId, spawnCFrame, nil)
+	
+	print(string.format("[InventoryManager] Spawned %s for %s", itemId, player.Name))
+	return true
+end
+
 -- Charge flashlight with battery
 function InventoryManager:ChargeFlashlight(player, flashlightTarget, batteryIndex)
 	local inventory = self._inventories[player.UserId]
@@ -615,6 +720,7 @@ function InventoryManager:ChargeFlashlight(player, flashlightTarget, batteryInde
 	-- Get flashlight item (either from inventory or equipped)
 	local flashlight = nil
 	local isEquipped = false
+	local currentCharge = 0
 	
 	if flashlightTarget == "equipped" then
 		-- Charging equipped flashlight
@@ -623,8 +729,18 @@ function InventoryManager:ChargeFlashlight(player, flashlightTarget, batteryInde
 			return false
 		end
 		isEquipped = true
-		-- Store charge in inventory.equippedCharge
-		flashlight = { charge = inventory.equippedCharge or 0.5 }
+		
+		-- Get ACTUAL charge from FlashlightController (not stale inventory value)
+		local flashlightData = self._flashlightController:GetFlashlightData(player)
+		if flashlightData then
+			currentCharge = flashlightData.charge
+			-- Sync inventory with actual value
+			inventory.equippedCharge = currentCharge
+		else
+			-- Fallback to inventory value
+			currentCharge = inventory.equippedCharge or 0.5
+		end
+		flashlight = { charge = currentCharge }
 	else
 		-- Charging flashlight in inventory
 		flashlight = inventory.items[flashlightTarget]
@@ -632,11 +748,14 @@ function InventoryManager:ChargeFlashlight(player, flashlightTarget, batteryInde
 			warn("[InventoryManager] Invalid flashlight item")
 			return false
 		end
+		currentCharge = flashlight.charge or 0.5
 	end
 	
 	-- Check if flashlight is already fully charged
 	local itemDef = ItemDefinitions.GetItem("Flashlight")
-	local currentCharge = flashlight.charge or itemDef.DefaultCharge
+	if currentCharge == nil then
+		currentCharge = itemDef.DefaultCharge
+	end
 	
 	if currentCharge >= itemDef.MaxCharge then
 		print("[InventoryManager] Flashlight already fully charged")
@@ -648,6 +767,8 @@ function InventoryManager:ChargeFlashlight(player, flashlightTarget, batteryInde
 	
 	if isEquipped then
 		inventory.equippedCharge = newCharge
+		-- Update the actual flashlight model through FlashlightController
+		self._flashlightController:UpdateCharge(player, newCharge)
 	else
 		flashlight.charge = newCharge
 	end
@@ -672,6 +793,8 @@ function InventoryManager:UpdateFlashlightCharge(player, newCharge)
 	-- Only update if flashlight is equipped
 	if inventory.equipped == "Flashlight" then
 		inventory.equippedCharge = newCharge
+		-- Update through FlashlightController (server-side)
+		self._flashlightController:UpdateCharge(player, newCharge)
 		print(string.format("[InventoryManager] Updated equipped flashlight charge to %.0f%%", newCharge * 100))
 		return true
 	end
@@ -680,22 +803,33 @@ function InventoryManager:UpdateFlashlightCharge(player, newCharge)
 end
 
 -- Atomically pickup item from world (removes from world FIRST, then adds to inventory)
-function InventoryManager:PickupItem(player, worldItemPath)
-	-- Find world item
+function InventoryManager:PickupItem(player, itemUUID)
+	print(string.format("[InventoryManager] PickupItem called by %s with UUID: %s", player.Name, tostring(itemUUID)))
+	
+	-- Find world item by UUID (not by name, to handle duplicate names)
 	local worldItem = nil
-	if worldItemPath then
-		-- Parse path like "Workspace.FlashlightModel"
-		local parts = string.split(worldItemPath, ".")
-		local current = game
-		for _, part in ipairs(parts) do
-			current = current:FindFirstChild(part)
-			if not current then break end
+	
+	if itemUUID then
+		local allItems = CollectionService:GetTagged("ItemPickup")
+		print(string.format("[InventoryManager] Searching through %d items with ItemPickup tag", #allItems))
+		
+		-- Search all items with ItemPickup tag for matching UUID
+		for _, item in allItems do
+			local itemStoredUUID = item:GetAttribute("ItemUUID")
+			print(string.format("[InventoryManager] Checking item %s - UUID: %s (match: %s)", item:GetFullName(), tostring(itemStoredUUID), tostring(itemStoredUUID == itemUUID)))
+			
+			if itemStoredUUID == itemUUID then
+				worldItem = item
+				print(string.format("[InventoryManager] ✓ Found matching item: %s", item:GetFullName()))
+				break
+			end
 		end
-		worldItem = current
+	else
+		warn("[InventoryManager] No UUID provided to PickupItem!")
 	end
 	
 	if not worldItem or not worldItem.Parent then
-		warn("[InventoryManager] World item not found or already picked up")
+		warn(string.format("[InventoryManager] World item not found or already picked up (UUID: %s)", tostring(itemUUID)))
 		return false
 	end
 	

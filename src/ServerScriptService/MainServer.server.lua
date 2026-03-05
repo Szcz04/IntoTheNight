@@ -87,23 +87,6 @@ _G.MovementTrackerModule = MovementTracker -- Module with States enum
 _G.WhisperMonster = whisperMonster
 _G.InventoryManager = inventoryManager
 
--- Setup flashlight equip/unequip events
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local inventoryEvent = ReplicatedStorage:WaitForChild("InventoryEvent")
-
-inventoryEvent.OnServerEvent:Connect(function(player, action, ...)
-	if action == "EquipFlashlight" then
-		-- Broadcast to this player (for FlashlightEquip.client.lua)
-		inventoryEvent:FireClient(player, "EquipFlashlight")
-		print(string.format("[MainServer] %s equipped flashlight", player.Name))
-		
-	elseif action == "UnequipFlashlight" then
-		-- Broadcast to this player
-		inventoryEvent:FireClient(player, "UnequipFlashlight")
-		print(string.format("[MainServer] %s unequipped flashlight", player.Name))
-	end
-end)
-
 print("=== Server Ready ===")
 print("Test commands:")
 print('  _G.GameState:SetState(_G.GameStateModule.States.RUNNING) -- Start round')

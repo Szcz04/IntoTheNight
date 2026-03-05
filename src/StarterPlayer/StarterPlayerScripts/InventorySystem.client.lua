@@ -44,13 +44,17 @@ local isDragging = false
 local draggedItemIndex = nil
 local draggedFrame = nil
 local dragOffset = Vector2.new(0, 0)
+local rotationOffset = Vector2.new(0, 0) -- Accumulated offset from rotations
 local isRotated = false
+local initialRotation = false -- Was item rotated when drag started?
 local ghostFrame = nil
 local highlightedItem = nil
 local highlight = nil
 local cursorUnlockLoop = nil -- Connection for cursor unlock loop
 local equippedItemId = nil -- Currently equipped item
 local dragFromEquipped = false -- Is drag from equipped slot?
+local currentMousePos = Vector2.new(0, 0) -- Track mouse position consistently
+local localGridOffset = Vector2.new(0, 0) -- Which sub-grid of item was clicked
 
 -- UI Elements
 local screenGui
@@ -313,10 +317,12 @@ end
 local function getGridPosition()
 	if not draggedFrame then return nil end
 	
+	-- Use the actual frame position (which includes rotationOffset) instead of recalculating from mouse
+	local framePos = draggedFrame.AbsolutePosition
 	local containerPos = itemContainer.AbsolutePosition
-	local mousePos = UserInputService:GetMouseLocation()
-	local relativePos = mousePos - containerPos
+	local relativePos = framePos - containerPos
 	
+	-- Calculate grid position from frame's top-left corner
 	local gridX = math.floor(relativePos.X / (SLOT_SIZE + SLOT_PADDING)) + 1
 	local gridY = math.floor(relativePos.Y / (SLOT_SIZE + SLOT_PADDING)) + 1
 	
@@ -330,12 +336,11 @@ end
 local function isMouseOverEquippedSlot()
 	if not equippedSlot then return false end
 	
-	local mousePos = UserInputService:GetMouseLocation()
 	local slotPos = equippedSlot.AbsolutePosition
 	local slotSize = equippedSlot.AbsoluteSize
 	
-	return mousePos.X >= slotPos.X and mousePos.X <= slotPos.X + slotSize.X and
-	       mousePos.Y >= slotPos.Y and mousePos.Y <= slotPos.Y + slotSize.Y
+	return currentMousePos.X >= slotPos.X and currentMousePos.X <= slotPos.X + slotSize.X and
+	       currentMousePos.Y >= slotPos.Y and currentMousePos.Y <= slotPos.Y + slotSize.Y
 end
 
 local function getItemAtPosition(mousePos)
@@ -389,6 +394,9 @@ local function updateGhostPreview()
 	if isMouseOverEquippedSlot() and not dragFromEquipped then
 		-- Check if item is equippable
 		local itemList = remoteFunction:InvokeServer("GetInventory")
+		-- Re-check ghostFrame after async server call
+		if not ghostFrame then return end
+		
 		if itemList and draggedItemIndex then
 			local item = itemList[draggedItemIndex]
 			if item then
@@ -419,8 +427,13 @@ local function updateGhostPreview()
 		if dragFromEquipped then
 			-- Dragging from equipped to grid
 			local equippedItemId = remoteFunction:InvokeServer("GetEquipped")
+			-- Re-check ghostFrame after async server call
+			if not ghostFrame then return end
+			
 			if equippedItemId then
 				local isValid = remoteFunction:InvokeServer("CanPlaceItem", equippedItemId, gridPos.X, gridPos.Y, false, nil)
+				-- Re-check ghostFrame after async server call
+				if not ghostFrame then return end
 				
 				if isValid then
 					ghostFrame.BorderColor3 = COLOR_VALID_PLACEMENT
@@ -435,10 +448,15 @@ local function updateGhostPreview()
 		else
 			-- Normal grid to grid
 			local itemList = remoteFunction:InvokeServer("GetInventory")
+			-- Re-check ghostFrame after async server call
+			if not ghostFrame then return end
+			
 			local item = itemList[draggedItemIndex]
 			if not item then return end
 			
 			local isValid = remoteFunction:InvokeServer("CanPlaceItem", item.itemId, gridPos.X, gridPos.Y, isRotated, draggedItemIndex)
+			-- Re-check ghostFrame after async server call
+			if not ghostFrame then return end
 			
 			if isValid then
 				ghostFrame.BorderColor3 = COLOR_VALID_PLACEMENT
@@ -470,8 +488,10 @@ end
 local function tryStartDrag(input)
 	if not isOpen then return end
 	
-	local mousePos = Vector2.new(input.Position.X, input.Position.Y)
-	local itemIndex, itemFrame = getItemAtPosition(mousePos)
+	-- Update mouse position (in case InputChanged hasn't fired yet)
+	currentMousePos = Vector2.new(input.Position.X, input.Position.Y)
+	
+	local itemIndex, itemFrame = getItemAtPosition(currentMousePos)
 	if not itemIndex then return end
 	
 	-- Check if dragging from equipped slot
@@ -485,11 +505,31 @@ local function tryStartDrag(input)
 	
 	isDragging = true
 	draggedFrame = itemFrame
-	isRotated = false
+	
+	-- Check if item was already rotated
+	if not dragFromEquipped and draggedItemIndex then
+		local itemList = remoteFunction:InvokeServer("GetInventory")
+		if itemList and itemList[draggedItemIndex] then
+			initialRotation = itemList[draggedItemIndex].isRotated or false
+		else
+			initialRotation = false
+		end
+	else
+		initialRotation = false
+	end
+	isRotated = initialRotation -- Start with item's current rotation state
 	
 	-- Calculate offset from exact click position
 	local framePos = itemFrame.AbsolutePosition
-	dragOffset = mousePos - framePos
+	dragOffset = currentMousePos - framePos
+	
+	-- Calculate which sub-grid within the item was clicked
+	local clickOffsetX = currentMousePos.X - framePos.X
+	local clickOffsetY = currentMousePos.Y - framePos.Y
+	localGridOffset = Vector2.new(
+		math.floor(clickOffsetX / (SLOT_SIZE + SLOT_PADDING)),
+		math.floor(clickOffsetY / (SLOT_SIZE + SLOT_PADDING))
+	)
 	
 	-- If dragging from equipped slot, restore proper item size first
 	if dragFromEquipped then
@@ -508,7 +548,15 @@ local function tryStartDrag(input)
 		
 		-- Recalculate offset after moving to new parent
 		local newFramePos = itemFrame.AbsolutePosition
-		dragOffset = mousePos - newFramePos
+		dragOffset = currentMousePos - newFramePos
+		
+		-- Recalculate sub-grid offset
+		local newClickOffsetX = currentMousePos.X - newFramePos.X
+		local newClickOffsetY = currentMousePos.Y - newFramePos.Y
+		localGridOffset = Vector2.new(
+			math.floor(newClickOffsetX / (SLOT_SIZE + SLOT_PADDING)),
+			math.floor(newClickOffsetY / (SLOT_SIZE + SLOT_PADDING))
+		)
 	end
 	
 	itemFrame.ZIndex = 10
@@ -523,8 +571,7 @@ local function stopDrag()
 	local success = false
 	
 	-- Check if dropping battery onto flashlight (for charging)
-	local mousePos = UserInputService:GetMouseLocation()
-	local targetItemIndex, _ = getItemAtPosition(mousePos)
+	local targetItemIndex, _ = getItemAtPosition(currentMousePos)
 	
 	if targetItemIndex and draggedItemIndex and targetItemIndex ~= draggedItemIndex then
 		-- Check if we're dropping battery on flashlight
@@ -645,6 +692,9 @@ local function stopDrag()
 	isDragging = false
 	draggedItemIndex = nil
 	dragFromEquipped = false
+	initialRotation = false
+	rotationOffset = Vector2.new(0, 0)
+	localGridOffset = Vector2.new(0, 0)
 	if draggedFrame then
 		draggedFrame.ZIndex = 3
 		draggedFrame = nil
@@ -659,10 +709,8 @@ end
 local function updateDrag()
 	if not draggedFrame then return end
 	
-	local mousePos = UserInputService:GetMouseLocation()
-	
 	-- Position frame so click point stays at cursor
-	local targetPos = mousePos - dragOffset
+	local targetPos = currentMousePos - dragOffset + rotationOffset
 	
 	-- Make relative to container
 	local containerPos = itemContainer.AbsolutePosition
@@ -675,17 +723,51 @@ end
 
 local function tryRotate()
 	if not isDragging then return end
+	if not draggedItemIndex and not dragFromEquipped then return end
 	
+	-- Get item info to know dimensions
+	local itemId = nil
+	if dragFromEquipped then
+		itemId = remoteFunction:InvokeServer("GetEquipped")
+	else
+		local itemList = remoteFunction:InvokeServer("GetInventory")
+		if itemList and itemList[draggedItemIndex] then
+			itemId = itemList[draggedItemIndex].itemId
+		end
+	end
+	
+	if not itemId then return end
+	local itemDef = ItemDefinitions.GetItem(itemId)
+	if not itemDef then return end
+	
+	-- Calculate position of clicked sub-grid in pixels (relative to item's top-left)
+	local oldSubGridX = localGridOffset.X * (SLOT_SIZE + SLOT_PADDING)
+	local oldSubGridY = localGridOffset.Y * (SLOT_SIZE + SLOT_PADDING)
+	
+	-- Toggle rotation
 	isRotated = not isRotated
+	
+	-- Swap grid offset for rotation (clicked grid changes position in rotated item)
+	-- Example: if clicked right grid (2,0) of 3x1 item, after rotation it becomes bottom grid (0,2) of 1x3
+	localGridOffset = Vector2.new(localGridOffset.Y, localGridOffset.X)
+	
+	-- Calculate new position of that same sub-grid after rotation
+	local newSubGridX = localGridOffset.X * (SLOT_SIZE + SLOT_PADDING)
+	local newSubGridY = localGridOffset.Y * (SLOT_SIZE + SLOT_PADDING)
+	
+	-- Accumulate rotation offset to keep the clicked sub-grid under cursor
+	local deltaX = newSubGridX - oldSubGridX
+	local deltaY = newSubGridY - oldSubGridY
+	rotationOffset = rotationOffset + Vector2.new(deltaX, deltaY)
+	
 	updateGhostPreview()
 	
-	print(string.format("[InventorySystem] Rotated item, isRotated=%s", tostring(isRotated)))
+	print(string.format("[InventorySystem] Rotated item, isRotated=%s, localGridOffset=(%d,%d), rotationOffset=(%.1f,%.1f)", tostring(isRotated), localGridOffset.X, localGridOffset.Y, rotationOffset.X, rotationOffset.Y))
 end
 
 -- Try to drop item (right click)
 local function tryDropItem(input)
-	local mousePos = Vector2.new(input.Position.X, input.Position.Y)
-	local itemIndex, itemFrame = getItemAtPosition(mousePos)
+	local itemIndex, itemFrame = getItemAtPosition(currentMousePos)
 	
 	if not itemIndex then return end
 	
@@ -701,13 +783,6 @@ end
 
 -- Display equipped item
 local function updateEquippedDisplay(itemId)
-	-- Unequip previous item (if any)
-	if equippedItemId and equippedItemId == "Flashlight" then
-		-- Send event to unequip flashlight
-		remoteEvent:FireServer("UnequipFlashlight")
-		print("[InventorySystem] Sent unequip flashlight request")
-	end
-	
 	-- Remove old equipped item frame
 	if equippedItemFrame then
 		equippedItemFrame:Destroy()
@@ -750,12 +825,6 @@ local function updateEquippedDisplay(itemId)
 	equippedItemFrame = frame
 	
 	print(string.format("[InventorySystem] Updated equipped display: %s", itemId))
-	
-	-- Equip flashlight if it's the equipped item
-	if itemId == "Flashlight" then
-		remoteEvent:FireServer("EquipFlashlight")
-		print("[InventorySystem] Sent equip flashlight request")
-	end
 end
 
 -- ========================================
@@ -859,11 +928,15 @@ local function tryPickup()
 	local itemId = highlightedItem:GetAttribute("ItemId")
 	if not itemId then return end
 	
-	-- Get full path to world item for server validation
-	local worldItemPath = highlightedItem:GetFullName()
+	-- Get UUID of the specific item (handles duplicate names correctly)
+	local itemUUID = highlightedItem:GetAttribute("ItemUUID")
+	if not itemUUID then
+		warn(string.format("[InventorySystem] Highlighted item %s has no UUID!", highlightedItem:GetFullName()))
+		return
+	end
 	
 	-- Send pickup request - server will handle removal and inventory add atomically
-	local success = remoteFunction:InvokeServer("PickupItem", worldItemPath)
+	local success = remoteFunction:InvokeServer("PickupItem", itemUUID)
 	
 	if success then
 		print(string.format("[InventorySystem] Picked up %s", itemId))
@@ -942,6 +1015,13 @@ local function setupInput()
 	UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			stopDrag()
+		end
+	end)
+	
+	-- Track mouse position for consistent drag offset calculation
+	UserInputService.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			currentMousePos = Vector2.new(input.Position.X, input.Position.Y)
 		end
 	end)
 	

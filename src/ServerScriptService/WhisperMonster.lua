@@ -104,6 +104,11 @@ function WhisperMonster:TriggerWhisper()
 	self:_StopTracking()
 	self:_CalculateAndApplyDamage()
 	
+	-- CRITICAL FIX: Reset movement tracking distances after event
+	for _, player in Players:GetPlayers() do
+		self._movementTracker:ResetDistance(player)
+	end
+	
 	self._isActive = false
 	print("[WhisperMonster] Whisper event ended")
 end
@@ -183,6 +188,13 @@ function WhisperMonster:_CalculateAndApplyDamage()
 	
 	for userId, data in pairs(self._trackingData) do
 		local player = data.player
+		
+		-- CRITICAL FIX: Validate player still exists (may have left during tracking)
+		if not player or not player.Parent then
+			warn(string.format("[WhisperMonster] Player (userId=%s) left during tracking - skipping damage", tostring(userId)))
+			continue
+		end
+		
 		local timeInState = data.timeInState
 		
 		-- Calculate damage proportionally

@@ -89,9 +89,10 @@ function ItemPickup:_UpdateRaycast()
 	if raycastResult then
 		local hitPart = raycastResult.Instance
 		
-		-- Check if hit part is a pickup item
-		if self:_IsPickupItem(hitPart) then
-			self:_HighlightItem(hitPart)
+		-- Check if hit part is a pickup item (or part of one)
+		local isPickup, pickupItem = self:_IsPickupItem(hitPart)
+		if isPickup and pickupItem then
+			self:_HighlightItem(pickupItem)
 			return
 		end
 	end
@@ -102,18 +103,20 @@ end
 
 -- Check if part is a pickup item
 function ItemPickup:_IsPickupItem(part)
-	-- Check if part has "ItemPickup" tag
-	if not CollectionService:HasTag(part, "ItemPickup") then
-		return false
+	-- Check the part itself and its ancestors for "ItemPickup" tag
+	local current = part
+	while current and current ~= workspace do
+		if CollectionService:HasTag(current, "ItemPickup") then
+			-- Found tagged item - verify it has ItemId
+			local itemId = current:GetAttribute("ItemId")
+			if itemId and ItemDefinitions.IsValidItem(itemId) then
+				return true, current -- Return both bool and the actual item
+			end
+		end
+		current = current.Parent
 	end
 	
-	-- Check if part has valid ItemId attribute
-	local itemId = part:GetAttribute("ItemId")
-	if not itemId or not ItemDefinitions.IsValidItem(itemId) then
-		return false
-	end
-	
-	return true
+	return false, nil
 end
 
 -- Highlight item
@@ -154,53 +157,24 @@ function ItemPickup:_TryPickup()
 		return
 	end
 	
-	-- Find first available slot
-	local slotX, slotY = self:_FindAvailableSlot(itemId, false)
-	
-	if not slotX then
-		-- Try rotated
-		slotX, slotY = self:_FindAvailableSlot(itemId, true)
+	-- Get UUID of the specific item (handles duplicate names correctly)
+	local itemUUID = self._highlightedItem:GetAttribute("ItemUUID")
+	if not itemUUID then
+		warn(string.format("[ItemPickup] Highlighted item %s has no UUID!", self._highlightedItem:GetFullName()))
+		return
 	end
 	
-	if slotX then
-		-- Attempt to add item to inventory
-		local success = self._remoteFunction:InvokeServer("AddItem", itemId, slotX, slotY, slotX ~= nil)
-		
-		if success then
-			print(string.format("[ItemPickup] Picked up %s", itemId))
-			
-			-- Destroy world item
-			self._highlightedItem:Destroy()
-			self:_ClearHighlight()
-		else
-			warn("[ItemPickup] Failed to add item to inventory")
-		end
+	print(string.format("[ItemPickup] Attempting to pick up %s with UUID: %s", itemId, itemUUID))
+	
+	-- Let server handle both removal from world and addition to inventory
+	local success = self._remoteFunction:InvokeServer("PickupItem", itemUUID)
+	
+	if success then
+		print(string.format("[ItemPickup] Picked up %s", itemId))
+		self:_ClearHighlight()
 	else
-		warn("[ItemPickup] No space in inventory for " .. itemId)
-		-- TODO: Show UI message to player
+		warn("[ItemPickup] Failed to pickup item (no space or already taken)")
 	end
-end
-
--- Find first available slot for item
-function ItemPickup:_FindAvailableSlot(itemId, isRotated)
-	local itemDef = ItemDefinitions.GetItem(itemId)
-	if not itemDef then return nil, nil end
-	
-	local width = isRotated and itemDef.Height or itemDef.Width
-	local height = isRotated and itemDef.Width or itemDef.Height
-	
-	-- Try each position in grid (top-left to bottom-right)
-	for y = 1, 8 - height + 1 do -- GRID_HEIGHT = 8
-		for x = 1, 6 - width + 1 do -- GRID_WIDTH = 6
-			-- Check if item can be placed at this position
-			local canPlace = self._remoteFunction:InvokeServer("CanPlaceItem", itemId, x, y, isRotated)
-			if canPlace then
-				return x, y
-			end
-		end
-	end
-	
-	return nil, nil
 end
 
 return ItemPickup
