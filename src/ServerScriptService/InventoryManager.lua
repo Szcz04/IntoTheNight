@@ -8,6 +8,11 @@
 		- Persistent per-player storage
 	
 	Grid coordinates: (1,1) = top-left, (6,8) = bottom-right
+
+	PROJECT DIRECTION NOTES:
+	- Inventory should prioritize sabotage tools and social deception props.
+	- TODO: keep core validation/placement logic, but consider simplifying UX if stealth pacing suffers.
+	- TODO: remove direct _G coupling (SanityManager) and inject dependency for suspicion/consumable effects.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -203,6 +208,9 @@ function InventoryManager:_HandleClientRequest(player, action, ...)
 	elseif action == "UpdateFlashlightCharge" then
 		local newCharge = ...
 		return self:UpdateFlashlightCharge(player, newCharge)
+	elseif action == "ConsumeItem" then
+		local itemIndex = ...
+		return self:ConsumeItem(player, itemIndex)
 	end
 	
 	warn(string.format("[InventoryManager] Unknown action: %s", tostring(action)))
@@ -901,6 +909,55 @@ function InventoryManager:PickupItem(player, itemUUID)
 		worldItem.Parent = workspace
 		return false
 	end
+end
+
+-- Consume a consumable item (food, potions, etc.)
+function InventoryManager:ConsumeItem(player, itemIndex)
+	local inventory = self._inventories[player.UserId]
+	if not inventory then
+		warn(string.format("[InventoryManager] No inventory for %s", player.Name))
+		return false
+	end
+	
+	local item = inventory.items[itemIndex]
+	if not item then
+		warn(string.format("[InventoryManager] Item %d not found for %s", itemIndex, player.Name))
+		return false
+	end
+	
+	-- Check if item is consumable
+	local itemDef = ItemDefinitions.GetItem(item.itemId)
+	if not itemDef then
+		warn(string.format("[InventoryManager] Item definition not found: %s", item.itemId))
+		return false
+	end
+	
+	if not itemDef.IsConsumable then
+		warn(string.format("[InventoryManager] Item %s is not consumable", item.itemId))
+		return false
+	end
+	
+	-- Get heal amount
+	local healAmount = itemDef.HealAmount or 0
+	if healAmount <= 0 then
+		warn(string.format("[InventoryManager] Item %s has no heal amount", item.itemId))
+		return false
+	end
+	
+	-- Heal player's sanity
+	local sanityManager = _G.SanityManager
+	if sanityManager then
+		sanityManager:HealSanity(player, healAmount)
+		print(string.format("[InventoryManager] %s consumed %s (+%d sanity)", 
+			player.Name, itemDef.Name, healAmount))
+	else
+		warn("[InventoryManager] SanityManager not found!")
+	end
+	
+	-- Remove consumed item from inventory
+	self:RemoveItem(player, itemIndex)
+	
+	return true
 end
 
 return InventoryManager

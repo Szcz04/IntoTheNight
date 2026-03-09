@@ -6,6 +6,11 @@
 		- Hold Ctrl: Crouch (decreased speed, lowered camera)
 	
 	Future: Add animations for sprinting and crouching
+
+	PROJECT DIRECTION NOTES:
+	- Movement controls are part of disguise performance in social stealth.
+	- TODO: tie sprint/crouch behavior to suspicion gain based on context and host commands.
+	- TODO: add command-driven input constraints (e.g., forced stop/freeze windows).
 ]]
 
 local Players = game:GetService("Players")

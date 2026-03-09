@@ -8,6 +8,13 @@
 		- Handle fail conditions
 	
 	Systems are modular. They communicate via events, not direct calls.
+
+	PROJECT DIRECTION NOTES (Social Stealth House Party):
+	- Keep this file as the central wiring point for stealth systems.
+	- TODO: integrate HostCommandSystem (jump/dance/freeze commands).
+	- TODO: integrate SuspicionManager as a first-class fail/win signal.
+	- TODO: convert horror fail loops into social elimination/exposure flow.
+	- TODO: phase out temporary _G access once dependencies are wired explicitly.
 ]]
 
 print("=== IntoTheNight - Server Starting ===")
@@ -20,12 +27,13 @@ local GameState = require(ServerScriptService.GameState)
 local PowerManager = require(ServerScriptService.PowerManager)
 local LightingController = require(ServerScriptService.LightingController)
 local AudioController = require(ServerScriptService.AudioController)
-local TimerDisplay = require(ServerScriptService.TimerDisplay)
 local LeverSequence = require(ServerScriptService.LeverSequence)
-local SanityManager = require(ServerScriptService.SanityManager)
+local SuspicionManager = require(ServerScriptService.SuspicionManager)
 local MovementTracker = require(ServerScriptService.MovementTracker)
 local WhisperMonster = require(ServerScriptService.WhisperMonster)
 local InventoryManager = require(ServerScriptService.InventoryManager)
+local HostCommandSystem = require(ServerScriptService.HostCommandSystem)
+local NPCManager = require(ServerScriptService.NPCs.NPCManager)
 
 -- Initialize systems
 print("[MainServer] Initializing core systems...")
@@ -34,12 +42,13 @@ local gameState = GameState.new()
 local powerManager = PowerManager.new()
 local lightingController = LightingController.new(powerManager)
 local audioController = AudioController.new(powerManager)
-local timerDisplay = TimerDisplay.new(powerManager)
 local leverSequence = LeverSequence.new(powerManager, gameState)
-local sanityManager = SanityManager.new(gameState)
+local suspicionManager = SuspicionManager.new(gameState)
 local movementTracker = MovementTracker.new()
-local whisperMonster = WhisperMonster.new(movementTracker, sanityManager)
+local whisperMonster = WhisperMonster.new(movementTracker, suspicionManager)
 local inventoryManager = InventoryManager.new()
+local hostCommandSystem = HostCommandSystem.new(gameState, movementTracker, suspicionManager)
+local npcManager = NPCManager.new(gameState, hostCommandSystem)
 
 print("[MainServer] All systems initialized")
 
@@ -56,7 +65,7 @@ gameState.StateChanged.Event:Connect(function(newState, oldState)
 		-- Round ended: reset systems
 		print("[MainServer] Round ending...")
 		powerManager:Reset()
-		sanityManager:ResetAll()
+		suspicionManager:ResetAll()
 	end
 end)
 
@@ -81,15 +90,13 @@ _G.GameStateModule = GameState -- Module with States enum
 _G.PowerManager = powerManager
 _G.PowerManagerModule = PowerManager -- Module with PowerStates enum
 _G.LeverSequence = leverSequence
-_G.SanityManager = sanityManager
+_G.SuspicionManager = suspicionManager
+_G.SanityManager = suspicionManager -- Legacy alias for existing integrations
 _G.MovementTracker = movementTracker
 _G.MovementTrackerModule = MovementTracker -- Module with States enum
 _G.WhisperMonster = whisperMonster
 _G.InventoryManager = inventoryManager
+_G.LightingController = lightingController
+_G.HostCommandSystem = hostCommandSystem
+_G.NPCManager = npcManager
 
-print("=== Server Ready ===")
-print("Test commands:")
-print('  _G.GameState:SetState(_G.GameStateModule.States.RUNNING) -- Start round')
-print('  _G.PowerManager:CutPower() -- Trigger blackout')
-print('  _G.PowerManager:RestorePower() -- Restore power')
-print('  print(_G.PowerManager:GetTimeRemaining()) -- Check time left')

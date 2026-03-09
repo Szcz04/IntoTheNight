@@ -11,6 +11,11 @@
 	HYBRID SYSTEM:
 		- CLIENT: Local SpotLight (smooth, no lag) - only visible to owner
 		- SERVER: Replicated SpotLight - visible to other players
+
+	PROJECT DIRECTION NOTES:
+	- Flashlight should communicate stealth risk, not only utility.
+	- TODO: show lightweight client warning when beam usage is likely to raise suspicion.
+	- TODO: integrate host-command restrictions (if command forbids movement/props).
 ]]
 
 local Players = game:GetService("Players")

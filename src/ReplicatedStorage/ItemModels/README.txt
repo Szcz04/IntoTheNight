@@ -24,9 +24,11 @@ JAK DODAĆ MODELE:
    - Model zostanie automatycznie zsynchronizowany przez Rojo
 
 WAŻNE:
-- NIE twórz plików .json w tym folderze ręcznie!
-- Rojo automatycznie śledzi zmiany w Studio
-- Jeśli model nie pojawia się, sprawdź czy Rojo server działa
+- Rojo domyślnie synchronizuje głównie z plików -> Studio (nie odwrotnie).
+- Modele stworzone tylko w Studio mogą zostać usunięte przy kolejnym sync, jeśli nie są mapowane.
+- Ten projekt ma ustawione $ignoreUnknownInstances dla ItemModels i ReplicatedStorage,
+  więc modele dodane w Studio powinny już być zachowane.
+- Najbezpieczniej trzymaj docelowe assety jako pliki w repo (np. eksport .rbxm/.rbxmx).
 
 PRZYKŁADOWA STRUKTURA MODELU:
 

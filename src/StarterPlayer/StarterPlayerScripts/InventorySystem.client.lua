@@ -6,6 +6,11 @@
 		- Drag & drop with rotation (R key)
 		- Raycast item pickup (E key with white highlight)
 		- Blocks movement when inventory open
+
+	PROJECT DIRECTION NOTES:
+	- Keep interactions quick and readable so players can stay socially blended.
+	- TODO: prioritize sabotage/deception actions over inventory micromanagement during active stealth moments.
+	- TODO: surface suspicion-safe vs suspicious item actions in UI hints.
 ]]
 
 local Players = game:GetService("Players")
@@ -56,6 +61,12 @@ local dragFromEquipped = false -- Is drag from equipped slot?
 local currentMousePos = Vector2.new(0, 0) -- Track mouse position consistently
 local localGridOffset = Vector2.new(0, 0) -- Which sub-grid of item was clicked
 
+-- Tooltip system
+local tooltipVisible = false
+local tooltipTimer = nil
+local hoveredItemIndex = nil
+local hoverConnections = {} -- {itemIndex = RBXScriptConnection}
+
 -- UI Elements
 local screenGui
 local container
@@ -63,6 +74,9 @@ local gridContainer
 local itemContainer
 local equippedSlot
 local equippedItemFrame
+local tooltipFrame
+local tooltipTitle
+local tooltipDescription
 
 -- RemoteEvent/Function
 local remoteEvent
@@ -171,6 +185,57 @@ local function createUI()
 	-- Container needs to be wider now
 	container.Size = UDim2.new(0, (SLOT_SIZE + SLOT_PADDING) * GRID_WIDTH + equippedSlotSize + 80, 0, (SLOT_SIZE + SLOT_PADDING) * GRID_HEIGHT + 60)
 	
+	-- Tooltip (attached to cursor)
+	tooltipFrame = Instance.new("Frame")
+	tooltipFrame.Name = "Tooltip"
+	tooltipFrame.Size = UDim2.new(0, 200, 0, 0) -- Height auto-sized
+	tooltipFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+	tooltipFrame.BorderSizePixel = 2
+	tooltipFrame.BorderColor3 = Color3.fromRGB(100, 100, 120)
+	tooltipFrame.ZIndex = 100
+	tooltipFrame.Visible = false
+	tooltipFrame.Parent = screenGui
+	
+	local tooltipCorner = Instance.new("UICorner")
+	tooltipCorner.CornerRadius = UDim.new(0, 4)
+	tooltipCorner.Parent = tooltipFrame
+	
+	tooltipTitle = Instance.new("TextLabel")
+	tooltipTitle.Name = "Title"
+	tooltipTitle.Size = UDim2.new(1, -16, 0, 25)
+	tooltipTitle.Position = UDim2.new(0, 8, 0, 8)
+	tooltipTitle.BackgroundTransparency = 1
+	tooltipTitle.Text = ""
+	tooltipTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+	tooltipTitle.TextSize = 14
+	tooltipTitle.Font = Enum.Font.GothamBold
+	tooltipTitle.TextXAlignment = Enum.TextXAlignment.Left
+	tooltipTitle.TextYAlignment = Enum.TextYAlignment.Top
+	tooltipTitle.ZIndex = 101
+	tooltipTitle.Parent = tooltipFrame
+	
+	tooltipDescription = Instance.new("TextLabel")
+	tooltipDescription.Name = "Description"
+	tooltipDescription.Size = UDim2.new(1, -16, 1, -41)
+	tooltipDescription.Position = UDim2.new(0, 8, 0, 33)
+	tooltipDescription.BackgroundTransparency = 1
+	tooltipDescription.Text = ""
+	tooltipDescription.TextColor3 = Color3.fromRGB(200, 200, 200)
+	tooltipDescription.TextSize = 12
+	tooltipDescription.Font = Enum.Font.Gotham
+	tooltipDescription.TextXAlignment = Enum.TextXAlignment.Left
+	tooltipDescription.TextYAlignment = Enum.TextYAlignment.Top
+	tooltipDescription.TextWrapped = true
+	tooltipDescription.ZIndex = 101
+	tooltipDescription.Parent = tooltipFrame
+	
+	-- Update tooltip position with mouse (runs every frame)
+	RunService.RenderStepped:Connect(function()
+		if tooltipVisible then
+			updateTooltipPosition()
+		end
+	end)
+	
 	print("[InventorySystem] UI created with equipped slot")
 end
 
@@ -216,6 +281,9 @@ end
 local function closeInventory()
 	if not isOpen then return end
 	isOpen = false
+	
+	-- Hide tooltip when closing inventory
+	hideTooltip()
 	
 	-- Stop forcing cursor unlock
 	if cursorUnlockLoop then
@@ -284,12 +352,57 @@ local function createItemFrame(item, itemIndex)
 	label.ZIndex = 4
 	label.Parent = frame
 	
+	-- Hover detection for tooltip
+	local isHovering = false
+	
+	local function checkHover()
+		if not isOpen then return end
+		if isDragging then return end -- Don't show tooltip while dragging
+		
+		-- Get mouse position accounting for GUI inset (topbar offset)
+		local GuiService = game:GetService("GuiService")
+		local mousePos = UserInputService:GetMouseLocation()
+		local guiInset = GuiService:GetGuiInset()
+		local adjustedMousePos = mousePos - guiInset
+		
+		local framePos = frame.AbsolutePosition
+		local frameSize = frame.AbsoluteSize
+		
+		local inBounds = adjustedMousePos.X >= framePos.X and adjustedMousePos.X <= framePos.X + frameSize.X
+			and adjustedMousePos.Y >= framePos.Y and adjustedMousePos.Y <= framePos.Y + frameSize.Y
+		
+		if inBounds and not isHovering then
+			isHovering = true
+			print(string.format("[InventorySystem] Mouse entered item %d (%s)", itemIndex, itemDef.Name))
+			startTooltipTimer(itemIndex, item)
+		elseif not inBounds and isHovering then
+			isHovering = false
+			print(string.format("[InventorySystem] Mouse left item %d", itemIndex))
+			hideTooltip()
+		end
+	end
+	
+	local hoverConnection = RunService.RenderStepped:Connect(checkHover)
+	hoverConnections[itemIndex] = hoverConnection
+	
 	items[itemIndex] = frame
 end
 
 local function removeItemFrame(itemIndex)
 	local frame = items[itemIndex]
 	if frame then
+		-- Disconnect hover connection
+		local hoverConnection = hoverConnections[itemIndex]
+		if hoverConnection then
+			hoverConnection:Disconnect()
+			hoverConnections[itemIndex] = nil
+		end
+		
+		-- Hide tooltip if this was the hovered item
+		if hoveredItemIndex == itemIndex then
+			hideTooltip()
+		end
+		
 		frame:Destroy()
 		items[itemIndex] = nil
 	end
@@ -304,10 +417,101 @@ local function updateItemFrame(itemIndex, item)
 end
 
 local function clearAllItems()
+	-- Disconnect all hover connections
+	for _, connection in pairs(hoverConnections) do
+		connection:Disconnect()
+	end
+	hoverConnections = {}
+	
+	-- Hide tooltip
+	hideTooltip()
+	
 	for _, frame in pairs(items) do
 		frame:Destroy()
 	end
 	items = {}
+end
+
+-- ========================================
+-- Tooltip System
+-- ========================================
+
+local function showTooltip(itemIndex, item)
+	if not isOpen then return end
+	
+	local itemDef = ItemDefinitions.GetItem(item.itemId)
+	if not itemDef then return end
+	
+	-- Update tooltip content
+	tooltipTitle.Text = itemDef.Name
+	tooltipDescription.Text = itemDef.Description or "No description"
+	
+	-- Calculate tooltip height based on text
+	local textBounds = tooltipDescription.TextBounds
+	local tooltipHeight = 41 + textBounds.Y + 16 -- Title + description + padding
+	tooltipFrame.Size = UDim2.new(0, 200, 0, tooltipHeight)
+	
+	-- Show tooltip
+	tooltipVisible = true
+	tooltipFrame.Visible = true
+	hoveredItemIndex = itemIndex
+	
+	updateTooltipPosition()
+	
+	print(string.format("[InventorySystem] Showing tooltip for %s", itemDef.Name))
+end
+
+function hideTooltip()
+	tooltipVisible = false
+	tooltipFrame.Visible = false
+	hoveredItemIndex = nil
+	
+	-- Cancel any pending timer
+	if tooltipTimer then
+		task.cancel(tooltipTimer)
+		tooltipTimer = nil
+	end
+end
+
+function updateTooltipPosition()
+	-- Get mouse position accounting for GUI inset
+	local GuiService = game:GetService("GuiService")
+	local mousePos = UserInputService:GetMouseLocation()
+	local guiInset = GuiService:GetGuiInset()
+	local adjustedMousePos = mousePos - guiInset
+	
+	local offset = Vector2.new(15, 15) -- Offset from cursor
+	
+	-- Keep tooltip on screen
+	local tooltipSize = tooltipFrame.AbsoluteSize
+	local screenSize = screenGui.AbsoluteSize
+	
+	local x = adjustedMousePos.X + offset.X
+	local y = adjustedMousePos.Y + offset.Y
+	
+	-- Prevent tooltip from going off right edge
+	if x + tooltipSize.X > screenSize.X then
+		x = adjustedMousePos.X - tooltipSize.X - 5
+	end
+	
+	-- Prevent tooltip from going off bottom edge
+	if y + tooltipSize.Y > screenSize.Y then
+		y = adjustedMousePos.Y - tooltipSize.Y - 5
+	end
+	
+	tooltipFrame.Position = UDim2.new(0, x, 0, y)
+end
+
+function startTooltipTimer(itemIndex, item)
+	-- Cancel existing timer
+	if tooltipTimer then
+		task.cancel(tooltipTimer)
+	end
+	
+	-- Start 1.5 second delay
+	tooltipTimer = task.delay(1.5, function()
+		showTooltip(itemIndex, item)
+	end)
 end
 
 -- ========================================
@@ -505,6 +709,9 @@ local function tryStartDrag(input)
 	
 	isDragging = true
 	draggedFrame = itemFrame
+	
+	-- Hide tooltip when starting to drag
+	hideTooltip()
 	
 	-- Check if item was already rotated
 	if not dragFromEquipped and draggedItemIndex then
@@ -832,21 +1039,16 @@ end
 -- ========================================
 
 local function isPickupItem(part)
-	-- Check if the part itself has the tag
-	if CollectionService:HasTag(part, "ItemPickup") then
-		local itemId = part:GetAttribute("ItemId")
-		if itemId and ItemDefinitions.IsValidItem(itemId) then
-			return true, part
+	-- Walk up ancestors so pickup works for nested model structures.
+	local current = part
+	while current and current ~= workspace do
+		if CollectionService:HasTag(current, "ItemPickup") then
+			local itemId = current:GetAttribute("ItemId")
+			if itemId and ItemDefinitions.IsValidItem(itemId) then
+				return true, current
+			end
 		end
-	end
-	
-	-- Check if the parent (Model) has the tag
-	local parent = part.Parent
-	if parent and parent:IsA("Model") and CollectionService:HasTag(parent, "ItemPickup") then
-		local itemId = parent:GetAttribute("ItemId")
-		if itemId and ItemDefinitions.IsValidItem(itemId) then
-			return true, parent
-		end
+		current = current.Parent
 	end
 	
 	return false, nil
@@ -920,6 +1122,40 @@ local function findAvailableSlot(itemId, isRot)
 	end
 	
 	return nil, nil
+end
+
+-- Try to consume hovered item (if it's consumable)
+local function tryConsumeItem()
+	-- Must be in inventory and hovering over an item
+	if not isOpen or not hoveredItemIndex then
+		return false
+	end
+	
+	-- Get the hovered item data
+	local itemList = remoteFunction:InvokeServer("GetInventory")
+	if not itemList or not itemList[hoveredItemIndex] then
+		return false
+	end
+	
+	local item = itemList[hoveredItemIndex]
+	local itemDef = ItemDefinitions.GetItem(item.itemId)
+	
+	-- Check if item is consumable
+	if not itemDef or not itemDef.IsConsumable then
+		return false
+	end
+	
+	-- Consume the item
+	local success = remoteFunction:InvokeServer("ConsumeItem", hoveredItemIndex)
+	
+	if success then
+		print(string.format("[InventorySystem] Consumed %s", itemDef.Name))
+		hideTooltip() -- Hide tooltip after consumption
+		return true
+	else
+		warn(string.format("[InventorySystem] Failed to consume %s", itemDef.Name))
+		return false
+	end
 end
 
 local function tryPickup()
@@ -1001,7 +1237,10 @@ local function setupInput()
 		elseif input.KeyCode == Enum.KeyCode.R then
 			tryRotate()
 		elseif input.KeyCode == Enum.KeyCode.E then
-			tryPickup()
+			-- Try to consume hovered item first, if not then try to pickup
+			if not tryConsumeItem() then
+				tryPickup()
+			end
 		elseif input.UserInputType == Enum.UserInputType.MouseButton1 then
 			tryStartDrag(input)
 		elseif input.UserInputType == Enum.UserInputType.MouseButton2 then

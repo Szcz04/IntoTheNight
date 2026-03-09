@@ -20,6 +20,11 @@
 	    - hitbox (Part with ClickDetector)
 	
 	Later: Add monster "traces" as hints for correct order
+
+	PROJECT DIRECTION NOTES:
+	- Keep as sabotage mini-game foundation (breaker/alarm/music/security panels).
+	- TODO: route wrong input consequences to SuspicionSystem or objective setback, not only timer penalty.
+	- TODO: allow NPC witness checks when player performs obvious sabotage interactions.
 ]]
 
 local CollectionService = game:GetService("CollectionService")

@@ -13,6 +13,12 @@
 		5. Applies sanity damage proportionally
 	
 	Strategy: Players should crouch or stand still when they hear whispers
+
+	PROJECT DIRECTION NOTES:
+	- Reusable scaffold for HostCommandSystem compliance checks.
+	- TODO: convert "whisper event" into baseline suspicion adder that tracks if plyers are not behaving suspiciously during regular part of the game loop (e.g., not sprinting, not running into restricted areas, not ignoring host commands).
+	- TODO: apply suspicion penalties instead of sanity damage.
+	- TODO: keep timing/grace-period pattern, but rename APIs and event logs for social stealth.
 ]]
 
 local Players = game:GetService("Players")

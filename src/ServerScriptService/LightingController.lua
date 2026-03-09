@@ -8,6 +8,11 @@
 	Ambient lighting is dimmed but skybox remains visible through windows.
 	Parts with Neon material are switched to SmoothPlastic when power is off.
 	This module REACTS to power state, it doesn't control it.
+
+	PROJECT DIRECTION NOTES:
+	- Keep environmental readability high for social stealth (players must read NPC behavior).
+	- TODO: support partial/zone blackout states for sabotage scenarios in the house.
+	- TODO: expose light-state cues that SuspicionSystem can use (e.g., "player visible" weight).
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -217,7 +222,7 @@ function LightingController:_PowerOn()
 	Lighting.Ambient = self._defaultAmbient
 	Lighting.OutdoorAmbient = self._defaultOutdoorAmbient
 	Lighting.Brightness = self._defaultBrightness
-	Lighting.ClockTime = 20 -- Evening
+	Lighting.ClockTime = 12 -- Evening
 	
 	print(string.format("[LightingController] Lights ON - %d train lights enabled, %d emergency lights disabled", 
 		trainLightsCount, emergencyLightsCount))
@@ -246,7 +251,7 @@ function LightingController:_Blackout()
 	Lighting.Ambient = self._blackoutAmbient
 	Lighting.OutdoorAmbient = self._blackoutOutdoorAmbient
 	Lighting.Brightness = self._blackoutBrightness
-	Lighting.ClockTime = 20 -- Evening
+	Lighting.ClockTime = 12 -- Evening
 	
 	print(string.format("[LightingController] BLACKOUT - %d train lights disabled, emergency lights flickering", disabledCount))
 end
@@ -311,5 +316,7 @@ function LightingController:_StopFlicker()
 		print("[LightingController] Stopped emergency light flicker")
 	end
 end
+
+
 
 return LightingController

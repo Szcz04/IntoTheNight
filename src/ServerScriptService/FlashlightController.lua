@@ -8,6 +8,11 @@
 		- Broadcasts light state to all clients
 	
 	REPLICATED: Model is parented to character, visible to all players!
+
+	PROJECT DIRECTION NOTES:
+	- Keep as a stealth risk/reward tool (visibility aid vs detection risk).
+	- TODO: integrate beam usage into suspicion calculations when seen by host/NPCs.
+	- TODO: allow command-specific rules (flashlight use forbidden during certain host commands).
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

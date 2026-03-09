@@ -19,6 +19,11 @@
 		- Whisper monster: punish players who run during whisper phase
 		- Stealth mechanics: different consequences for running vs walking
 		- Audio system: footstep sounds based on movement state
+
+	PROJECT DIRECTION NOTES:
+	- Core fit for social stealth: keep as authoritative behavior telemetry.
+	- TODO: feed movement states into SuspicionSystem (running near host/NPC should escalate suspicion).
+	- TODO: add helpers for command compliance windows (e.g., frozen duration, jump observed, dance observed).
 ]]
 
 local Players = game:GetService("Players")

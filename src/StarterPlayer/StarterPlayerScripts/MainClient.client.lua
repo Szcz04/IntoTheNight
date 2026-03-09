@@ -1,21 +1,13 @@
 --[[
-	MainClient: Client-side system orchestrator
-	
-	Initializes all client systems:
-		- SanityEffects (visual/audio effects)
-		- MovementControls (sprint/crouch)
-		- InventoryUI (grid display)
-		- InventoryDragDrop (drag & drop + rotation)
-		- ItemPickup (raycast detection)
-]]
-
---[[
 	MainClient: Client systems info
 	
 	All client systems run independently:
 		- SanityEffects.client.lua (visual/audio effects)
 		- MovementControls.client.lua (sprint/crouch)
-		- InventorySystem.client.lua (complete inventory solution)
+		- InventorySystem.client.lua (complete inventory solution with tooltips)
+		- CameraSetup.client.lua (first person camera)
+		- FlashlightClient.client.lua (flashlight mechanics)
+		- FlashlightEquip.client.lua (flashlight equip system)
 	
 	No initialization needed - they auto-start!
 ]]

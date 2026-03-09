@@ -5,8 +5,10 @@
     "ReplicatedStorage": {
       "$className": "ReplicatedStorage",
       "$path": "src/ReplicatedStorage",
+      "$ignoreUnknownInstances": true,
       "ItemModels": {
         "$className": "Folder",
+        "$path": "src/ReplicatedStorage/ItemModels",
         "$ignoreUnknownInstances": true
       }
     },

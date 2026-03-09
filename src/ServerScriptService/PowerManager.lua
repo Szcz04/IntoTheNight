@@ -7,6 +7,11 @@
 	
 	Tracks time without power. Does NOT manipulate Lighting directly.
 	Other systems react to power state changes.
+
+	PROJECT DIRECTION NOTES:
+	- Keep as house infrastructure state (lights/music/security), not only death timer.
+	- TODO: treat blackout as stealth opportunity/risk (suspicion modifier), not hard fail.
+	- TODO: expose sabotage-friendly APIs (temporary outage, localized outage, recovery delay).
 ]]
 
 local PowerManager = {}
