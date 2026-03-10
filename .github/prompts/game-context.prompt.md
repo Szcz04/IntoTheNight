@@ -11,7 +11,7 @@ You are working on **IntoTheNight**, a Roblox horror game with the following cor
 - **Level progression**: Players exit the train at stops and enter different train cars to progress to new levels
 
 ## Core Systems
-- **Sanity System**: Player mental state mechanic
+- **Suspicion System**: NPC suspicion/escalation mechanic
 - **Inventory System**: Item management and storage
 - **Power Management**: Electrical systems and generators
 - **Lighting Controller**: Dynamic lighting based on power state

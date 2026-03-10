@@ -73,7 +73,8 @@ function InterestPointService:_RegisterPoint(instance)
 		occupants = {},
 		sitDuration = math.max(1, sitDuration),
 		approachRadius = math.max(2, approachRadius),
-		seat = seat
+		seat = seat,
+		searchPosition = seat and seat.Position or instance.Position
 	}
 
 	debugLog("Registered point name=%s type=%s capacity=%d", instance.Name, tostring(pointType), capacity)
@@ -121,9 +122,12 @@ function InterestPointService:ClaimBestPointConstrained(npcId, preferredTypes, c
 	constraints = constraints or {}
 	local origin = constraints.origin
 	local maxDistance = constraints.maxDistance
+	local maxDistanceSquared = maxDistance and (maxDistance * maxDistance) or nil
 	local lockedPoint = constraints.lockedPoint
 	local requireSeat = constraints.requireSeat
 	local avoidPoint = constraints.avoidPoint
+	local rejectedByCapacity = 0
+	local rejectedByDistance = 0
 
 	for _, point in pairs(self._points) do
 		if lockedPoint and point.instance ~= lockedPoint then
@@ -144,9 +148,18 @@ function InterestPointService:ClaimBestPointConstrained(npcId, preferredTypes, c
 		end
 
 		if occupantCount < point.capacity then
-			if origin and maxDistance then
-				local targetPos = self:GetTargetPosition(point)
-				if targetPos and (targetPos - origin).Magnitude > maxDistance then
+			if origin and maxDistanceSquared then
+				local targetPos = self:_GetPointSearchPositionForOrigin(point, origin)
+				if targetPos then
+					local offset = targetPos - origin
+					local distanceSquared = offset.X * offset.X + offset.Z * offset.Z
+					if distanceSquared > maxDistanceSquared then
+						rejectedByDistance = rejectedByDistance + 1
+						continue
+					end
+				end
+				if not targetPos then
+					rejectedByDistance = rejectedByDistance + 1
 					continue
 				end
 			end
@@ -166,9 +179,21 @@ function InterestPointService:ClaimBestPointConstrained(npcId, preferredTypes, c
 				score = preferredScore + math.random()
 			})
 		end
+
+		if occupantCount >= point.capacity then
+			rejectedByCapacity = rejectedByCapacity + 1
+		end
 	end
 
 	if #candidates == 0 then
+		debugLog(
+			"ClaimMiss npc=%s preferred=%s maxDistance=%s reason=no_candidates distReject=%d capReject=%d",
+			tostring(npcId),
+			preferredTypes and table.concat(preferredTypes, ",") or "nil",
+			tostring(maxDistance),
+			rejectedByDistance,
+			rejectedByCapacity
+		)
 		return nil
 	end
 
@@ -189,6 +214,63 @@ function InterestPointService:ClaimBestPointConstrained(npcId, preferredTypes, c
 	return chosen
 end
 
+function InterestPointService:_GetPointSearchPosition(pointData)
+	if not pointData then
+		return nil
+	end
+
+	if (not pointData.seat or not pointData.seat.Parent) and pointData.instance and pointData.instance.Parent then
+		pointData.seat = self:_ResolveSeatForPoint(pointData.instance)
+	end
+
+	if pointData.seat and pointData.seat.Parent then
+		pointData.searchPosition = pointData.seat.Position
+		return pointData.searchPosition
+	end
+
+	if pointData.instance and pointData.instance.Parent then
+		pointData.searchPosition = pointData.instance.Position
+		return pointData.searchPosition
+	end
+
+	return nil
+end
+
+function InterestPointService:_GetPointSearchPositionForOrigin(pointData, origin)
+	if not pointData then
+		return nil
+	end
+
+	if not origin then
+		return self:_GetPointSearchPosition(pointData)
+	end
+
+	if (not pointData.seat or not pointData.seat.Parent) and pointData.instance and pointData.instance.Parent then
+		pointData.seat = self:_ResolveSeatForPoint(pointData.instance)
+	end
+
+	if pointData.seat and pointData.seat.Parent then
+		pointData.searchPosition = pointData.seat.Position
+		return pointData.searchPosition
+	end
+
+	local part = pointData.instance
+	if part and part.Parent then
+		local localPoint = part.CFrame:PointToObjectSpace(origin)
+		local half = part.Size * 0.5
+		local clamped = Vector3.new(
+			math.clamp(localPoint.X, -half.X, half.X),
+			math.clamp(localPoint.Y, -half.Y, half.Y),
+			math.clamp(localPoint.Z, -half.Z, half.Z)
+		)
+		local closest = part.CFrame:PointToWorldSpace(clamped)
+		pointData.searchPosition = closest
+		return closest
+	end
+
+	return nil
+end
+
 function InterestPointService:GetTargetPosition(pointData)
 	if not pointData then
 		return nil
@@ -199,10 +281,12 @@ function InterestPointService:GetTargetPosition(pointData)
 	end
 
 	if pointData.seat and pointData.seat.Parent then
+		pointData.searchPosition = pointData.seat.Position
 		return pointData.seat.Position
 	end
 
 	if pointData.instance and pointData.instance.Parent then
+		pointData.searchPosition = pointData.instance.Position
 		return pointData.instance.Position
 	end
 

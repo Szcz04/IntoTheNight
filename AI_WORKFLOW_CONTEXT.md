@@ -50,12 +50,12 @@ Pattern:
 - `InventorySystem.client.lua`: inventory UI + drag/drop + pickup interactions
 - `MovementControls.client.lua`: sprint/crouch input
 - `FlashlightClient.client.lua`: client-side flashlight effects/controls
-- `SanityEffects.client.lua`: legacy-style effects (candidate repurpose for suspicion UX)
+- `SuspicionEffects.client.lua`: suspicion cues and host-command feedback UX
 - `CameraSetup.client.lua`: first-person camera setup
 
 ## Current Refactor Status
 Completed:
-- Sanity -> Suspicion migration has begun (`SuspicionManager` exists and is wired)
+- Suspicion naming migration completed (`SuspicionManager` and client cues are wired)
 - Host command foundation exists (`HostCommandSystem`)
 - Multiple scripts include "PROJECT DIRECTION NOTES" and TODO markers
 
@@ -110,7 +110,7 @@ Common chat commands include:
 - plus other legacy debug commands
 
 ## Known Caveats
-- Some legacy naming and commands still use "sanity" wording for compatibility
+- Naming is now standardized on "suspicion" across active systems
 - Some legacy files/features are transitional and should be migrated gradually
 - Not all planned stealth systems are implemented yet (NPC crowd/witness logic)
 

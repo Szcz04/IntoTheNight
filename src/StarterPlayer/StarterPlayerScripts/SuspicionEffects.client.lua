@@ -1,7 +1,7 @@
 --[[
 	Suspicion Cues / Effects
 
-	Repurposed from legacy horror sanity effects into social-stealth readable cues:
+	Repurposed from legacy horror effects into social-stealth readable cues:
 	- Subtle edge tension by suspicion level (no camera distortion)
 	- Compact suspicion meter + level label
 	- Host command reminder panel with countdown
@@ -15,7 +15,7 @@ local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
 
-local SanityEffects = {}
+local SuspicionEffects = {}
 
 local LEVEL_LABELS = {
 	[1] = "SAFE",
@@ -130,7 +130,7 @@ local function createEdge(parent, name, size, position, rotation, firstAlpha, se
 	return edge
 end
 
-function SanityEffects:_CreateUI()
+function SuspicionEffects:_CreateUI()
 	screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "SuspicionCues"
 	screenGui.ResetOnSpawn = false
@@ -295,10 +295,10 @@ function SanityEffects:_CreateUI()
 	flashFrame.ZIndex = 15
 	flashFrame.Parent = screenGui
 
-	print("[SanityEffects] Suspicion cue UI initialized")
+	print("[SuspicionEffects] Suspicion cue UI initialized")
 end
 
-function SanityEffects:_ShowReason(text)
+function SuspicionEffects:_ShowReason(text)
 	if not reasonLabel then
 		return
 	end
@@ -319,7 +319,7 @@ function SanityEffects:_ShowReason(text)
 	end)
 end
 
-function SanityEffects:_WarningFlash(alpha)
+function SuspicionEffects:_WarningFlash(alpha)
 	if not flashFrame then
 		return
 	end
@@ -338,7 +338,7 @@ function SanityEffects:_WarningFlash(alpha)
 	end)
 end
 
-function SanityEffects:_UpdateMeter(animated)
+function SuspicionEffects:_UpdateMeter(animated)
 	if not meterFill or not meterLabel then
 		return
 	end
@@ -368,8 +368,8 @@ function SanityEffects:_UpdateMeter(animated)
 	end
 end
 
-function SanityEffects:_ApplySuspicionUpdate(data)
-	currentSuspicion = math.clamp(tonumber(data.suspicion or data.sanity) or 0, 0, 100)
+function SuspicionEffects:_ApplySuspicionUpdate(data)
+	currentSuspicion = math.clamp(tonumber(data.suspicion) or 0, 0, 100)
 	currentLevel = tonumber(data.level) or getLevelFromSuspicion(currentSuspicion)
 	self:_UpdateMeter(true)
 
@@ -383,7 +383,7 @@ function SanityEffects:_ApplySuspicionUpdate(data)
 	end
 end
 
-function SanityEffects:_OnSuspicionEvent(action, data)
+function SuspicionEffects:_OnSuspicionEvent(action, data)
 	data = data or {}
 
 	if action == "Init" or action == "Update" then
@@ -395,7 +395,7 @@ function SanityEffects:_OnSuspicionEvent(action, data)
 		end
 		self:_UpdateMeter(true)
 		self:_WarningFlash(0.1)
-	elseif action == "Exposed" or action == "Eliminated" then
+	elseif action == "Exposed" then
 		currentLevel = 4
 		currentSuspicion = 100
 		self:_UpdateMeter(true)
@@ -404,7 +404,7 @@ function SanityEffects:_OnSuspicionEvent(action, data)
 	end
 end
 
-function SanityEffects:_OnHostCommandEvent(action, payload)
+function SuspicionEffects:_OnHostCommandEvent(action, payload)
 	payload = payload or {}
 
 	if action == "CommandStarted" then
@@ -428,7 +428,7 @@ function SanityEffects:_OnHostCommandEvent(action, payload)
 	end
 end
 
-function SanityEffects:_ConnectToServer()
+function SuspicionEffects:_ConnectToServer()
 	local suspicionEvent = ReplicatedStorage:FindFirstChild("SuspicionEvent")
 	if not suspicionEvent then
 		suspicionEvent = ReplicatedStorage:WaitForChild("SuspicionEvent", 20)
@@ -438,16 +438,7 @@ function SanityEffects:_ConnectToServer()
 		table.insert(connections, suspicionEvent.OnClientEvent:Connect(function(action, data)
 			self:_OnSuspicionEvent(action, data)
 		end))
-		print("[SanityEffects] Connected to SuspicionEvent")
-	end
-
-	-- Legacy bridge listener while older scripts still publish SanityEvent.
-	local legacyEvent = ReplicatedStorage:FindFirstChild("SanityEvent")
-	if legacyEvent then
-		table.insert(connections, legacyEvent.OnClientEvent:Connect(function(action, data)
-			self:_OnSuspicionEvent(action, data)
-		end))
-		print("[SanityEffects] Connected to SanityEvent (legacy)")
+		print("[SuspicionEffects] Connected to SuspicionEvent")
 	end
 
 	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
@@ -464,11 +455,11 @@ function SanityEffects:_ConnectToServer()
 		table.insert(connections, hostCommandEvent.OnClientEvent:Connect(function(action, payload)
 			self:_OnHostCommandEvent(action, payload)
 		end))
-		print("[SanityEffects] Connected to HostCommand remote")
+		print("[SuspicionEffects] Connected to HostCommand remote")
 	end
 end
 
-function SanityEffects:_StartRenderLoop()
+function SuspicionEffects:_StartRenderLoop()
 	table.insert(connections, RunService.RenderStepped:Connect(function(deltaTime)
 		local lerpAlpha = math.clamp(deltaTime * 6, 0, 1)
 		currentEdgeOpacity = currentEdgeOpacity + (targetEdgeOpacity - currentEdgeOpacity) * lerpAlpha
@@ -491,15 +482,15 @@ function SanityEffects:_StartRenderLoop()
 	end))
 end
 
-function SanityEffects:Init()
+function SuspicionEffects:Init()
 	self:_CreateUI()
 	self:_ConnectToServer()
 	self:_StartRenderLoop()
 	self:_UpdateMeter(false)
-	print("[SanityEffects] Suspicion cues initialized")
+	print("[SuspicionEffects] Suspicion cues initialized")
 end
 
-function SanityEffects:Cleanup()
+function SuspicionEffects:Cleanup()
 	for _, connection in ipairs(connections) do
 		disconnectConnection(connection)
 	end
@@ -511,9 +502,9 @@ function SanityEffects:Cleanup()
 	end
 
 	activeHostCommand = nil
-	print("[SanityEffects] Cleaned up")
+	print("[SuspicionEffects] Cleaned up")
 end
 
-SanityEffects:Init()
+SuspicionEffects:Init()
 
-return SanityEffects
+return SuspicionEffects

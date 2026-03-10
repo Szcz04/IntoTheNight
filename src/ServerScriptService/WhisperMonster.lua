@@ -6,18 +6,18 @@
 		2. Waits 1 second (grace period for player reaction)
 		3. Tracks all players' movement for 10 seconds
 		4. Calculates damage based on movement states:
-			- RUNNING: 30 sanity damage (full time)
-			- WALKING: 10 sanity damage (full time)
+			- RUNNING: 30 suspicion (full time)
+			- WALKING: 10 suspicion (full time)
 			- SNEAKING: 0 damage (safe)
 			- IDLE: 0 damage (safe)
-		5. Applies sanity damage proportionally
+		5. Applies suspicion proportionally
 	
 	Strategy: Players should crouch or stand still when they hear whispers
 
 	PROJECT DIRECTION NOTES:
 	- Reusable scaffold for HostCommandSystem compliance checks.
 	- TODO: convert "whisper event" into baseline suspicion adder that tracks if plyers are not behaving suspiciously during regular part of the game loop (e.g., not sprinting, not running into restricted areas, not ignoring host commands).
-	- TODO: apply suspicion penalties instead of sanity damage.
+	- TODO: tune suspicion penalties against witness and host-command systems.
 	- TODO: keep timing/grace-period pattern, but rename APIs and event logs for social stealth.
 ]]
 
@@ -28,8 +28,8 @@ local SoundService = game:GetService("SoundService")
 local WhisperMonster = {}
 WhisperMonster.__index = WhisperMonster
 
--- Damage configuration (for 10 full seconds in state)
-local DAMAGE_CONFIG = {
+-- Suspicion configuration (for 10 full seconds in state)
+local SUSPICION_CONFIG = {
 	RUNNING = 30,  -- Maximum punishment for running
 	WALKING = 10,  -- Moderate punishment for walking
 	SNEAKING = 0,  -- Safe
@@ -40,11 +40,11 @@ local DAMAGE_CONFIG = {
 local GRACE_PERIOD = 1    -- Seconds before tracking starts
 local TRACKING_DURATION = 10  -- Seconds to track movement
 
-function WhisperMonster.new(movementTracker, sanityManager)
+function WhisperMonster.new(movementTracker, suspicionManager)
 	local self = setmetatable({}, WhisperMonster)
 	
 	self._movementTracker = movementTracker
-	self._sanityManager = sanityManager
+	self._suspicionManager = suspicionManager
 	
 	-- Whisper sound (placeholder)
 	self._whisperSound = nil
@@ -106,9 +106,9 @@ function WhisperMonster:TriggerWhisper()
 	-- Wait tracking duration
 	task.wait(TRACKING_DURATION)
 	
-	-- Stop tracking and calculate damage
+	-- Stop tracking and calculate suspicion
 	self:_StopTracking()
-	self:_CalculateAndApplyDamage()
+	self:_CalculateAndApplySuspicion()
 	
 	-- CRITICAL FIX: Reset movement tracking distances after event
 	for _, player in Players:GetPlayers() do
@@ -188,45 +188,45 @@ function WhisperMonster:_StopTracking()
 	print("[WhisperMonster] Stopped tracking")
 end
 
--- Calculate and apply damage based on movement
-function WhisperMonster:_CalculateAndApplyDamage()
-	print("[WhisperMonster] Calculating damage...")
+-- Calculate and apply suspicion based on movement
+function WhisperMonster:_CalculateAndApplySuspicion()
+	print("[WhisperMonster] Calculating suspicion...")
 	
 	for userId, data in pairs(self._trackingData) do
 		local player = data.player
 		
 		-- CRITICAL FIX: Validate player still exists (may have left during tracking)
 		if not player or not player.Parent then
-			warn(string.format("[WhisperMonster] Player (userId=%s) left during tracking - skipping damage", tostring(userId)))
+			warn(string.format("[WhisperMonster] Player (userId=%s) left during tracking - skipping suspicion", tostring(userId)))
 			continue
 		end
 		
 		local timeInState = data.timeInState
 		
-		-- Calculate damage proportionally
-		local totalDamage = 0
+		-- Calculate suspicion proportionally
+		local totalSuspicion = 0
 		
 		for state, timeSpent in pairs(timeInState) do
-			local damagePerSecond = (DAMAGE_CONFIG[state] or 0) / TRACKING_DURATION
-			local stateDamage = damagePerSecond * timeSpent
-			totalDamage = totalDamage + stateDamage
+			local suspicionPerSecond = (SUSPICION_CONFIG[state] or 0) / TRACKING_DURATION
+			local stateSuspicion = suspicionPerSecond * timeSpent
+			totalSuspicion = totalSuspicion + stateSuspicion
 		end
 		
 		-- Round to integer
-		totalDamage = math.floor(totalDamage + 0.5)
+		totalSuspicion = math.floor(totalSuspicion + 0.5)
 		
 		-- Log breakdown
 		print(string.format("[WhisperMonster] %s movement breakdown:", player.Name))
 		print(string.format("  IDLE: %.1fs | SNEAKING: %.1fs | WALKING: %.1fs | RUNNING: %.1fs", 
 			timeInState.IDLE, timeInState.SNEAKING, timeInState.WALKING, timeInState.RUNNING))
-		print(string.format("  Total damage: %d sanity", totalDamage))
+		print(string.format("  Total suspicion: %d", totalSuspicion))
 		
-		-- Apply damage
-		if totalDamage > 0 then
-			self._sanityManager:DamageSanity(player, totalDamage)
-			warn(string.format("[WhisperMonster] ⚠️ %s took %d sanity damage from whisper!", player.Name, totalDamage))
+		-- Apply suspicion
+		if totalSuspicion > 0 then
+			self._suspicionManager:AddSuspicion(player, totalSuspicion, "Whisper movement penalty")
+			warn(string.format("[WhisperMonster] ⚠️ %s gained %d suspicion from whisper!", player.Name, totalSuspicion))
 		else
-			print(string.format("[WhisperMonster] ✓ %s survived safely (0 damage)", player.Name))
+			print(string.format("[WhisperMonster] ✓ %s survived safely (0 suspicion)", player.Name))
 		end
 	end
 	

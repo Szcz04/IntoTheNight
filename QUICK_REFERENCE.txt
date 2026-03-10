@@ -378,9 +378,9 @@ POWERMANAGER - reaguj na blackout:
     powerManager.PowerStateChanged → ON/OFF
     powerManager:GetTimeRemaining()
 
-SANITYMANAGER - ModyfikUJ sanity:
-    sanityManager:DamageSanity(player, amount)
-    sanityManager:HealSanity(player, amount)
+SUSPICIONMANAGER - Modyfikuj suspicion:
+    suspicionManager:AddSuspicion(player, amount, reason)
+    suspicionManager:ReduceSuspicion(player, amount, reason)
 
 INVENTORYMANAGER - Spawn items:
     Zobacz _SpawnWorldItem() jako przykład

@@ -34,6 +34,10 @@ local WhisperMonster = require(ServerScriptService.WhisperMonster)
 local InventoryManager = require(ServerScriptService.InventoryManager)
 local HostCommandSystem = require(ServerScriptService.HostCommandSystem)
 local NPCManager = require(ServerScriptService.NPCs.NPCManager)
+local WitnessSystem = require(ServerScriptService.NPCs.WitnessSystem)
+local NPCWitnessSource = require(ServerScriptService.NPCs.WitnessSources.NPCWitnessSource)
+local CameraWitnessSource = require(ServerScriptService.NPCs.WitnessSources.CameraWitnessSource)
+local NPCWitnessDialogueService = require(ServerScriptService.NPCs.NPCWitnessDialogueService)
 
 -- Initialize systems
 print("[MainServer] Initializing core systems...")
@@ -49,6 +53,16 @@ local whisperMonster = WhisperMonster.new(movementTracker, suspicionManager)
 local inventoryManager = InventoryManager.new()
 local hostCommandSystem = HostCommandSystem.new(gameState, movementTracker, suspicionManager)
 local npcManager = NPCManager.new(gameState, hostCommandSystem)
+local witnessSystem = WitnessSystem.new({
+	suspicionManager = suspicionManager
+})
+local npcWitnessSource = NPCWitnessSource.new(npcManager)
+local cameraWitnessSource = CameraWitnessSource.new()
+local npcWitnessDialogueService = NPCWitnessDialogueService.new(witnessSystem, npcManager)
+
+witnessSystem:RegisterSource(npcWitnessSource)
+witnessSystem:RegisterSource(cameraWitnessSource)
+hostCommandSystem:SetWitnessSystem(witnessSystem)
 
 print("[MainServer] All systems initialized")
 
@@ -91,7 +105,6 @@ _G.PowerManager = powerManager
 _G.PowerManagerModule = PowerManager -- Module with PowerStates enum
 _G.LeverSequence = leverSequence
 _G.SuspicionManager = suspicionManager
-_G.SanityManager = suspicionManager -- Legacy alias for existing integrations
 _G.MovementTracker = movementTracker
 _G.MovementTrackerModule = MovementTracker -- Module with States enum
 _G.WhisperMonster = whisperMonster
@@ -99,4 +112,6 @@ _G.InventoryManager = inventoryManager
 _G.LightingController = lightingController
 _G.HostCommandSystem = hostCommandSystem
 _G.NPCManager = npcManager
+_G.WitnessSystem = witnessSystem
+_G.NPCWitnessDialogueService = npcWitnessDialogueService
 

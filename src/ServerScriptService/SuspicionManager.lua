@@ -13,7 +13,6 @@
 		- Events for suspicion updates and level changes
 		- Exposure handling at maximum suspicion
 		- Add/reduce/set methods with optional reasons
-		- Backward-compatible wrappers for legacy sanity callers
 
 	Client feedback direction (not implemented here):
 		- TODO: NPC stare indicators
@@ -51,7 +50,6 @@ function SuspicionManager.new(gameState)
 
 	-- Events for communication with clients
 	self._remoteEvent = self:_CreateRemoteEvent("SuspicionEvent")
-	self._legacyRemoteEvent = self:_CreateRemoteEvent("SanityEvent") -- Compatibility bridge
 
 	-- Listen for players joining/leaving
 	Players.PlayerAdded:Connect(function(player)
@@ -97,7 +95,6 @@ function SuspicionManager:_OnPlayerAdded(player)
 	-- Notify client of initial suspicion
 	self:_SendToClient(player, "Init", {
 		suspicion = self._startingSuspicion,
-		sanity = self._startingSuspicion, -- Legacy payload compatibility
 		level = self:_CalculateLevel(self._startingSuspicion)
 	})
 
@@ -167,7 +164,6 @@ function SuspicionManager:AddSuspicion(player, amount, reason)
 
 	self:_SendToClient(player, "Update", {
 		suspicion = data.suspicion,
-		sanity = data.suspicion, -- Legacy payload compatibility
 		level = data.level,
 		oldLevel = oldLevel,
 		reason = reason
@@ -212,7 +208,6 @@ function SuspicionManager:ReduceSuspicion(player, amount, reason)
 
 	self:_SendToClient(player, "Update", {
 		suspicion = data.suspicion,
-		sanity = data.suspicion, -- Legacy payload compatibility
 		level = data.level,
 		oldLevel = oldLevel,
 		reason = reason
@@ -252,7 +247,6 @@ function SuspicionManager:SetSuspicion(player, suspicion, reason)
 
 	self:_SendToClient(player, "Update", {
 		suspicion = data.suspicion,
-		sanity = data.suspicion, -- Legacy payload compatibility
 		level = data.level,
 		oldLevel = oldLevel,
 		reason = reason
@@ -267,34 +261,9 @@ function SuspicionManager:SetSuspicion(player, suspicion, reason)
 	end
 end
 
--- Backward-compatible aliases for existing integrations
-function SuspicionManager:GetSanity(player)
-	return self:GetSuspicion(player)
-end
-
-function SuspicionManager:DamageSanity(player, amount)
-	self:AddSuspicion(player, amount, "Legacy DamageSanity")
-end
-
-function SuspicionManager:HealSanity(player, amount)
-	self:ReduceSuspicion(player, amount, "Legacy HealSanity")
-end
-
-function SuspicionManager:SetSanity(player, sanity)
-	self:SetSuspicion(player, sanity, "Legacy SetSanity")
-end
-
--- Send update to client (new event + legacy bridge event)
+-- Send update to client
 function SuspicionManager:_SendToClient(player, action, data)
 	self._remoteEvent:FireClient(player, action, data)
-
-	if self._legacyRemoteEvent then
-		local legacyAction = action
-		if action == "Exposed" then
-			legacyAction = "Eliminated"
-		end
-		self._legacyRemoteEvent:FireClient(player, legacyAction, data)
-	end
 end
 
 -- Handle suspicion level change
@@ -323,8 +292,7 @@ function SuspicionManager:_ExposePlayer(player, reason)
 
 	self:_SendToClient(player, "Exposed", {
 		reason = reason,
-		suspicion = data.suspicion,
-		sanity = data.suspicion -- Legacy payload compatibility
+		suspicion = data.suspicion
 	})
 
 	-- TODO: Integrate with proper elimination/exposure flow when implemented.
@@ -342,7 +310,6 @@ function SuspicionManager:ResetAll()
 
 		self:_SendToClient(data.player, "Init", {
 			suspicion = data.suspicion,
-			sanity = data.suspicion, -- Legacy payload compatibility
 			level = data.level
 		})
 	end

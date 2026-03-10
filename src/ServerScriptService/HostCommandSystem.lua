@@ -44,6 +44,9 @@ HostCommandSystem.Config = {
 	DurationMin = 8,
 	DurationMax = 12,
 	DefaultSuspicionPenalty = 15,
+	EvaluationDelaySeconds = 0.35,
+	FreezeWitnessMemoryEnabled = true,
+	FreezeWitnessSampleIntervalSeconds = 0.2,
 	FaceDirectionHoldSeconds = 1.5,
 	FaceDotThreshold = 0.75,
 	DanceRequiredMovingSeconds = 2.0,
@@ -69,6 +72,7 @@ function HostCommandSystem.new(gameState, movementTracker, suspicionManager)
 	self._playerProgress = {}
 	self._sampleConnection = nil
 	self._commandIdCounter = 0
+	self._witnessSystem = nil
 
 	self._remoteEvent = self:_CreateRemoteEvent()
 	self.CommandStarted = Instance.new("BindableEvent")
@@ -112,6 +116,11 @@ function HostCommandSystem.new(gameState, movementTracker, suspicionManager)
 
 	print("[HostCommandSystem] Initialized")
 	return self
+end
+
+function HostCommandSystem:SetWitnessSystem(witnessSystem)
+	self._witnessSystem = witnessSystem
+	print(string.format("[HostCommandSystem] Witness system attached: %s", tostring(witnessSystem ~= nil)))
 end
 
 function HostCommandSystem:_CreateRemoteEvent()
@@ -177,7 +186,11 @@ function HostCommandSystem:_CreateProgressData(player)
 		timeFacing = 0,
 		timeDancing = 0,
 		wasSitting = false,
-		lastSampleTime = tick()
+		lastSampleTime = tick(),
+		freezeWitnessed = false,
+		freezeWitnessCount = 0,
+		freezeWitnessAt = 0,
+		lastFreezeWitnessSampleAt = 0
 	}
 end
 
@@ -278,6 +291,7 @@ function HostCommandSystem:IssueCommand(forcedCommandName)
 
 	self._commandIdCounter = self._commandIdCounter + 1
 	local duration = math.random(self.Config.DurationMin, self.Config.DurationMax)
+	local evaluationDelay = math.max(0, tonumber(self.Config.EvaluationDelaySeconds) or 0)
 	local context = {}
 
 	if commandName == "FACE_DIRECTION" then
@@ -290,18 +304,19 @@ function HostCommandSystem:IssueCommand(forcedCommandName)
 		id = self._commandIdCounter,
 		name = commandName,
 		duration = duration,
+		evaluationDelay = evaluationDelay,
 		definition = commandDef,
 		context = context,
 		startedAt = tick()
 	}
 
 	self._lastCommandName = commandName
-	self._commandEndTime = tick() + duration
+	self._commandEndTime = tick() + duration + evaluationDelay
 
 	self:_ResetProgressForActivePlayers()
 	self:_StartSampling()
 
-	print(string.format("[HostCommandSystem] HOST COMMAND: %s (duration=%ds)", commandName, duration))
+	print(string.format("[HostCommandSystem] HOST COMMAND: %s (duration=%ds, evalDelay=%.2fs)", commandName, duration, evaluationDelay))
 
 	self._remoteEvent:FireAllClients("CommandStarted", {
 		id = self._activeCommand.id,
@@ -320,7 +335,7 @@ function HostCommandSystem:IssueCommand(forcedCommandName)
 	})
 
 	task.spawn(function()
-		task.wait(duration)
+		task.wait(duration + evaluationDelay)
 		if self._activeCommand and self._activeCommand.id == self._commandIdCounter then
 			self:EvaluatePlayers()
 		end
@@ -383,6 +398,8 @@ function HostCommandSystem:_SamplePlayerProgress(deltaTime)
 				if moveMagnitude > 0.2 and movementState ~= "RUNNING" then
 					progress.timeDancing = progress.timeDancing + deltaTime
 				end
+			elseif commandName == "FREEZE" and rootPart then
+				self:_SampleFreezeWitnessMemory(player, progress, humanoid, rootPart)
 			elseif commandName == "FACE_DIRECTION" and rootPart then
 				local targetVector = self._activeCommand.context.faceDirectionVector
 				if targetVector then
@@ -397,6 +414,58 @@ function HostCommandSystem:_SamplePlayerProgress(deltaTime)
 	end
 end
 
+function HostCommandSystem:_IsFreezeViolation(player, humanoid)
+	if self._movementTracker then
+		local state = self._movementTracker:GetState(player)
+		if state then
+			return self.Config.FreezeAllowedStates[state] ~= true
+		end
+	end
+
+	if humanoid then
+		return humanoid.MoveDirection.Magnitude > 0.15
+	end
+
+	return false
+end
+
+function HostCommandSystem:_SampleFreezeWitnessMemory(player, progress, humanoid, rootPart)
+	if self.Config.FreezeWitnessMemoryEnabled ~= true then
+		return
+	end
+
+	if not self._witnessSystem or not self._witnessSystem.EvaluateWitnesses then
+		return
+	end
+
+	if not self:_IsFreezeViolation(player, humanoid) then
+		return
+	end
+
+	local now = tick()
+	local interval = math.max(0.05, tonumber(self.Config.FreezeWitnessSampleIntervalSeconds) or 0.2)
+	if now - (progress.lastFreezeWitnessSampleAt or 0) < interval then
+		return
+	end
+	progress.lastFreezeWitnessSampleAt = now
+
+	local result = self._witnessSystem:EvaluateWitnesses({
+		actorPlayer = player,
+		actionType = "HostCommandFreezeMovement",
+		actionContext = {
+			phase = "sampling"
+		},
+		worldPosition = rootPart.Position
+	})
+
+	local witnessCount = #(result.witnesses or {})
+	if witnessCount > 0 then
+		progress.freezeWitnessed = true
+		progress.freezeWitnessCount = math.max(progress.freezeWitnessCount or 0, witnessCount)
+		progress.freezeWitnessAt = now
+	end
+end
+
 function HostCommandSystem:EvaluatePlayers()
 	if not self._activeCommand then
 		return
@@ -406,6 +475,7 @@ function HostCommandSystem:EvaluatePlayers()
 	local commandDef = self._activeCommand.definition
 
 	for _, player in Players:GetPlayers() do
+		local progress = self._playerProgress[player.UserId]
 		local compliant = false
 		if commandDef and commandDef.check then
 			compliant = commandDef.check(player) == true
@@ -413,7 +483,39 @@ function HostCommandSystem:EvaluatePlayers()
 
 		if not compliant and self._suspicionManager then
 			local penalty = commandDef.penalty or self.Config.DefaultSuspicionPenalty
-			self._suspicionManager:AddSuspicion(player, penalty, "FailedHostCommand:" .. commandName)
+			if commandName == "FREEZE" and progress and progress.freezeWitnessed then
+				local rememberedCount = math.max(1, tonumber(progress.freezeWitnessCount) or 1)
+				local finalPenalty = penalty
+				local multiplier = 1
+				if self._witnessSystem and self._witnessSystem.ComputeSuspicionAmount then
+					finalPenalty, multiplier = self._witnessSystem:ComputeSuspicionAmount(penalty, rememberedCount)
+				end
+				self._suspicionManager:AddSuspicion(
+					player,
+					finalPenalty,
+					string.format("RememberedWitnessedFailedHostCommand:FREEZE:%d", rememberedCount)
+				)
+				print(string.format("[HostCommandSystem] FREEZE remembered witness applied for %s (witnesses=%d multiplier=%.2f penalty=%d)", player.Name, rememberedCount, multiplier, finalPenalty))
+			elseif self._witnessSystem and self._witnessSystem.ProcessSuspiciousAction then
+				local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+				local result = self._witnessSystem:ProcessSuspiciousAction({
+					actorPlayer = player,
+					actionType = "HostCommandNonCompliance",
+					actionContext = {
+						commandName = commandName,
+						commandId = self._activeCommand and self._activeCommand.id or -1
+					},
+					worldPosition = root and root.Position or nil,
+					suspicionAmount = penalty,
+					reason = "WitnessedFailedHostCommand:" .. commandName
+				})
+
+				if not result.witnessed then
+					print(string.format("[HostCommandSystem] No witness for %s failing %s - no suspicion applied", player.Name, commandName))
+				end
+			else
+				self._suspicionManager:AddSuspicion(player, penalty, "FailedHostCommand:" .. commandName)
+			end
 		end
 	end
 
@@ -471,6 +573,21 @@ end
 
 function HostCommandSystem:GetActiveCommand()
 	return self._activeCommand
+end
+
+function HostCommandSystem:SetEvaluationDelaySeconds(seconds)
+	local parsed = tonumber(seconds)
+	if not parsed then
+		return false
+	end
+
+	self.Config.EvaluationDelaySeconds = math.clamp(parsed, 0, 5)
+	print(string.format("[HostCommandSystem] EvaluationDelaySeconds set to %.2f", self.Config.EvaluationDelaySeconds))
+	return true
+end
+
+function HostCommandSystem:GetEvaluationDelaySeconds()
+	return tonumber(self.Config.EvaluationDelaySeconds) or 0
 end
 
 -- Dev helper: force a specific command now (if no command currently active).

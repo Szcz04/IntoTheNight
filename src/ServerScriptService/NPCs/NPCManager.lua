@@ -1,6 +1,7 @@
 local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
 local PhysicsService = game:GetService("PhysicsService")
+local CollectionService = game:GetService("CollectionService")
 
 local InterestPointService = require(script.Parent.InterestPointService)
 local AvatarPool = require(script.Parent.AvatarPool)
@@ -13,6 +14,7 @@ NPCManager.__index = NPCManager
 
 local DEFAULT_RIG_TYPE = Enum.HumanoidRigType.R15
 local NPC_COLLISION_GROUP = "NPC"
+local SPAWN_POINT_TAG = "NPCSpawnPoint"
 
 function NPCManager.new(gameState, hostCommandSystem)
 	local self = setmetatable({}, NPCManager)
@@ -35,6 +37,8 @@ function NPCManager.new(gameState, hostCommandSystem)
 	self._desiredNpcCount = 8
 	self._nextNpcId = 1
 	self._isRunning = false
+	self._spawnPoints = {}
+	self._spawnAssignments = {}
 	self._tierWeights = {
 		primitive = 0.5,
 		standard = 0.35,
@@ -42,6 +46,8 @@ function NPCManager.new(gameState, hostCommandSystem)
 	}
 	self._forcedTier = nil
 
+	self:_DiscoverSpawnPoints()
+	self:_BindSpawnPointSignals()
 	self:_BindGameState()
 
 	print("[NPCManager] Initialized")
@@ -79,9 +85,11 @@ function NPCManager:Stop()
 	end
 
 	self._isRunning = false
+	self._spawnAssignments = {}
 	for id, controller in pairs(self._controllers) do
 		controller:Stop()
 		self._controllers[id] = nil
+		self._spawnAssignments[id] = nil
 	end
 
 	for _, npc in ipairs(self._npcFolder:GetChildren()) do
@@ -119,6 +127,7 @@ function NPCManager:_TrimNpcCount()
 		if controller then
 			controller:Stop()
 			self._controllers[id] = nil
+			self._spawnAssignments[id] = nil
 		end
 
 		local model = self._npcFolder:FindFirstChild(string.format("Guest_%02d", id))
@@ -139,10 +148,16 @@ end
 function NPCManager:_SpawnNpc()
 	local npcId = self._nextNpcId
 	self._nextNpcId = self._nextNpcId + 1
+	local initialTier = self:_ChooseTierForNpc()
+	local spawnPoint = self:_ChooseSpawnPointForTier(initialTier)
+	local intelligenceTier = self:_ResolveTierForSpawnPoint(initialTier, spawnPoint)
+	local leashRadius = self:_ResolveLeashRadiusForSpawnPoint(spawnPoint, intelligenceTier)
+	local spawnCFrame = self:_GetRandomSpawnCFrame(spawnPoint)
+	local spawnAnchorPosition = spawnPoint and spawnPoint.Position or spawnCFrame.Position
 
 	local description = self._avatarPool:GetNextDescription()
 
-	local model = self:_CreateNpcModel(npcId, description)
+	local model = self:_CreateNpcModel(npcId, description, spawnCFrame)
 	if not model then
 		return
 	end
@@ -157,8 +172,10 @@ function NPCManager:_SpawnNpc()
 	local displayName = self._namePool:GetNextName(npcId)
 	humanoid.DisplayName = displayName
 	model:SetAttribute("NPCDisplayName", displayName)
-	local intelligenceTier = self:_ChooseTierForNpc()
 	model:SetAttribute("NPCIntelligenceTier", intelligenceTier)
+	if spawnPoint then
+		model:SetAttribute("NPCSpawnPoint", spawnPoint.Name)
+	end
 
 	humanoid.WalkSpeed = 6
 	if not humanoid:FindFirstChildOfClass("Animator") then
@@ -172,11 +189,15 @@ function NPCManager:_SpawnNpc()
 		humanoid = humanoid,
 		root = root,
 		intelligenceTier = intelligenceTier,
+		spawnAnchorPosition = spawnAnchorPosition,
+		spawnPointName = spawnPoint and spawnPoint.Name or "NPCSpawn",
+		leashRadius = leashRadius,
 		interestPointService = self._interestPointService,
 		hostCommandSystem = self._hostCommandSystem
 	})
 
 	self._controllers[npcId] = controller
+	self._spawnAssignments[npcId] = spawnPoint and spawnPoint.Name or "NPCSpawn"
 	controller:Start()
 end
 
@@ -195,6 +216,203 @@ function NPCManager:_ChooseTierForNpc()
 	end
 
 	return NPCIntelligenceTiers.Tiers.Advanced
+end
+
+function NPCManager:_ResolveTierForSpawnPoint(initialTier, spawnPoint)
+	if self._forcedTier then
+		return self._forcedTier
+	end
+
+	if not spawnPoint then
+		return initialTier
+	end
+
+	local tierValue = spawnPoint:GetAttribute("IntelligenceTier") or spawnPoint:GetAttribute("Tier")
+	local parsedTier = self:_ParseTierValue(tierValue)
+	if parsedTier then
+		return parsedTier
+	end
+
+	return initialTier
+end
+
+function NPCManager:_ResolveLeashRadiusForSpawnPoint(spawnPoint, intelligenceTier)
+	if not spawnPoint then
+		return nil
+	end
+
+	local perTierAttribute = nil
+	if intelligenceTier == NPCIntelligenceTiers.Tiers.Primitive then
+		perTierAttribute = "PrimitiveLeashRadius"
+	elseif intelligenceTier == NPCIntelligenceTiers.Tiers.Standard then
+		perTierAttribute = "StandardLeashRadius"
+	elseif intelligenceTier == NPCIntelligenceTiers.Tiers.Advanced then
+		perTierAttribute = "AdvancedLeashRadius"
+	end
+
+	local specific = perTierAttribute and tonumber(spawnPoint:GetAttribute(perTierAttribute)) or nil
+	if specific and specific > 0 then
+		return specific
+	end
+
+	local generic = tonumber(spawnPoint:GetAttribute("LeashRadius"))
+	if generic and generic > 0 then
+		return generic
+	end
+
+	return nil
+end
+
+function NPCManager:_ChooseSpawnPointForTier(targetTier)
+	local all = self:_GetValidSpawnPoints()
+	if #all == 0 then
+		return nil
+	end
+
+	local matching = {}
+	for _, spawnPoint in ipairs(all) do
+		local tierValue = spawnPoint:GetAttribute("IntelligenceTier") or spawnPoint:GetAttribute("Tier")
+		local parsedTier = self:_ParseTierValue(tierValue)
+		if not parsedTier or parsedTier == targetTier then
+			table.insert(matching, spawnPoint)
+		end
+	end
+
+	if #matching == 0 then
+		matching = all
+	end
+
+	return self:_PickLeastLoadedSpawnPoint(matching)
+end
+
+function NPCManager:_PickLeastLoadedSpawnPoint(spawnPoints)
+	local loadByName = self:_GetSpawnPointLoads()
+	local lowestLoad = math.huge
+	local lowest = {}
+
+	for _, spawnPoint in ipairs(spawnPoints) do
+		local name = spawnPoint.Name
+		local load = loadByName[name] or 0
+		if load < lowestLoad then
+			lowestLoad = load
+			lowest = {spawnPoint}
+		elseif load == lowestLoad then
+			table.insert(lowest, spawnPoint)
+		end
+	end
+
+	if #lowest == 0 then
+		return self:_PickWeightedSpawnPoint(spawnPoints)
+	end
+
+	return lowest[math.random(1, #lowest)]
+end
+
+function NPCManager:_GetSpawnPointLoads()
+	local loads = {}
+	for _, spawnPoint in ipairs(self:_GetValidSpawnPoints()) do
+		loads[spawnPoint.Name] = 0
+	end
+
+	for npcId in pairs(self._controllers) do
+		local spawnName = self._spawnAssignments[npcId]
+		if spawnName then
+			loads[spawnName] = (loads[spawnName] or 0) + 1
+		end
+	end
+
+	return loads
+end
+
+function NPCManager:_PickWeightedSpawnPoint(spawnPoints)
+	local totalWeight = 0
+	for _, spawnPoint in ipairs(spawnPoints) do
+		local weight = tonumber(spawnPoint:GetAttribute("Weight")) or 1
+		if weight > 0 then
+			totalWeight = totalWeight + weight
+		end
+	end
+
+	if totalWeight <= 0 then
+		return spawnPoints[math.random(1, #spawnPoints)]
+	end
+
+	local roll = math.random() * totalWeight
+	local current = 0
+	for _, spawnPoint in ipairs(spawnPoints) do
+		local weight = tonumber(spawnPoint:GetAttribute("Weight")) or 1
+		if weight > 0 then
+			current = current + weight
+			if roll <= current then
+				return spawnPoint
+			end
+		end
+	end
+
+	return spawnPoints[#spawnPoints]
+end
+
+function NPCManager:_ParseTierValue(tierValue)
+	if tierValue == nil then
+		return nil
+	end
+
+	if typeof(tierValue) == "number" then
+		local asNumber = math.floor(tierValue)
+		if asNumber == NPCIntelligenceTiers.Tiers.Primitive
+			or asNumber == NPCIntelligenceTiers.Tiers.Standard
+			or asNumber == NPCIntelligenceTiers.Tiers.Advanced then
+			return asNumber
+		end
+		return nil
+	end
+
+	if typeof(tierValue) == "string" then
+		local normalized = string.lower(string.gsub(tierValue, "%s+", ""))
+		if normalized == "primitive" or normalized == "1" then
+			return NPCIntelligenceTiers.Tiers.Primitive
+		elseif normalized == "standard" or normalized == "2" then
+			return NPCIntelligenceTiers.Tiers.Standard
+		elseif normalized == "advanced" or normalized == "3" then
+			return NPCIntelligenceTiers.Tiers.Advanced
+		end
+	end
+
+	return nil
+end
+
+function NPCManager:_GetValidSpawnPoints()
+	local points = {}
+	for instance in pairs(self._spawnPoints) do
+		if instance and instance.Parent and instance:IsA("BasePart") then
+			table.insert(points, instance)
+		end
+	end
+	return points
+end
+
+function NPCManager:_DiscoverSpawnPoints()
+	for _, instance in ipairs(CollectionService:GetTagged(SPAWN_POINT_TAG)) do
+		self:_RegisterSpawnPoint(instance)
+	end
+end
+
+function NPCManager:_BindSpawnPointSignals()
+	CollectionService:GetInstanceAddedSignal(SPAWN_POINT_TAG):Connect(function(instance)
+		self:_RegisterSpawnPoint(instance)
+	end)
+
+	CollectionService:GetInstanceRemovedSignal(SPAWN_POINT_TAG):Connect(function(instance)
+		self._spawnPoints[instance] = nil
+	end)
+end
+
+function NPCManager:_RegisterSpawnPoint(instance)
+	if not instance:IsA("BasePart") then
+		return
+	end
+
+	self._spawnPoints[instance] = true
 end
 
 function NPCManager:_NormalizeTierWeights()
@@ -295,8 +513,8 @@ function NPCManager:GetDebugSnapshot()
 	return snapshot
 end
 
-function NPCManager:_CreateNpcModel(npcId, description)
-	local spawnCFrame = self:_GetRandomSpawnCFrame()
+function NPCManager:_CreateNpcModel(npcId, description, spawnCFrame)
+	spawnCFrame = spawnCFrame or self:_GetRandomSpawnCFrame(nil)
 
 	local model = nil
 	if description then
@@ -329,8 +547,10 @@ function NPCManager:_CreateNpcModel(npcId, description)
 	return model
 end
 
-function NPCManager:_GetRandomSpawnCFrame()
-	local spawnPart = Workspace:FindFirstChild("NPCSpawn")
+function NPCManager:_GetRandomSpawnCFrame(spawnPart)
+	if not spawnPart then
+		spawnPart = Workspace:FindFirstChild("NPCSpawn")
+	end
 	if not spawnPart or not spawnPart:IsA("BasePart") then
 		return CFrame.new(0, 5, 0)
 	end
@@ -363,6 +583,10 @@ end
 
 function NPCManager:GetControllers()
 	return self._controllers
+end
+
+function NPCManager:GetControllerById(npcId)
+	return self._controllers[npcId]
 end
 
 function NPCManager:GetActiveNpcCount()

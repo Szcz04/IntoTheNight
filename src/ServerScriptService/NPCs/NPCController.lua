@@ -1,5 +1,6 @@
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
+local TextService = game:GetService("TextService")
 
 local NPCStateMachine = require(script.Parent.NPCStateMachine)
 local NPCIntelligenceTiers = require(script.Parent.NPCIntelligenceTiers)
@@ -26,6 +27,7 @@ local WALK_STALL_DIR_THRESHOLD = 0.05
 local WALK_STALL_TIME = 0.35
 local WALK_BLEND_SPEED_THRESHOLD = 0.45
 local WALK_BLEND_DIR_THRESHOLD = 0.03
+local WITNESS_BUBBLE_NAME = "NPCWitnessBubble"
 
 function NPCController.new(config)
 	local self = setmetatable({}, NPCController)
@@ -38,6 +40,8 @@ function NPCController.new(config)
 	self._hostCommandSystem = config.hostCommandSystem
 	self._intelligenceTier = config.intelligenceTier or NPCIntelligenceTiers.Tiers.Standard
 	self._tierPolicy = NPCIntelligenceTiers.ResolvePolicy(self._intelligenceTier)
+	self._spawnLeashRadius = tonumber(config.leashRadius)
+	self._spawnPointName = config.spawnPointName
 
 	self._stateMachine = NPCStateMachine.new(self)
 	self._activePoint = nil
@@ -53,19 +57,37 @@ function NPCController.new(config)
 	self._activeTrack = nil
 	self._activeTrackName = nil
 	self._currentSeat = nil
-	self._anchorPosition = self._root and self._root.Position or nil
+	self._anchorPosition = config.spawnAnchorPosition or (self._root and self._root.Position or nil)
 	self._assignedPoint = nil
 	self._lastPoint = nil
 	self._currentAnimationState = nil
 	self._lastMoveToTarget = nil
 	self._lastWalkMovingAt = tick()
 	self._lastWalkStallLogAt = 0
+	self._lastPrimitiveMissLogAt = 0
+	self._lastWitnessCommentAt = 0
 
 	return self
 end
 
 function NPCController:GetId()
 	return self._id
+end
+
+function NPCController:GetRootPart()
+	return self._root
+end
+
+function NPCController:GetModel()
+	return self._model
+end
+
+function NPCController:GetDisplayName()
+	if self._humanoid and self._humanoid.DisplayName and #self._humanoid.DisplayName > 0 then
+		return self._humanoid.DisplayName
+	end
+
+	return self._model and self._model.Name or string.format("NPC_%02d", self._id)
 end
 
 function NPCController:_IsDebugEnabled()
@@ -293,22 +315,24 @@ function NPCController:_Update(dt)
 			end
 		end
 
-		if speed > WALK_STALL_SPEED_THRESHOLD or moveDir > WALK_STALL_DIR_THRESHOLD then
-			self._lastWalkMovingAt = tick()
-		elseif tick() - self._lastWalkMovingAt >= WALK_STALL_TIME and tick() - self._lastWalkStallLogAt >= 0.8 then
-			self._lastWalkStallLogAt = tick()
-			local distToTarget = -1
-			if self._lastMoveToTarget then
-				distToTarget = (self._root.Position - self._lastMoveToTarget).Magnitude
-			end
+		if self._currentAnimationState == "WALK" then
+			if speed > WALK_STALL_SPEED_THRESHOLD or moveDir > WALK_STALL_DIR_THRESHOLD then
+				self._lastWalkMovingAt = tick()
+			elseif tick() - self._lastWalkMovingAt >= WALK_STALL_TIME and tick() - self._lastWalkStallLogAt >= 0.8 then
+				self._lastWalkStallLogAt = tick()
+				local distToTarget = -1
+				if self._lastMoveToTarget then
+					distToTarget = (self._root.Position - self._lastMoveToTarget).Magnitude
+				end
 
-			self:_DebugLog(
-				"WALK track while near-stationary speed=%.2f moveDir=%.2f distToTarget=%.2f state=%s",
-				speed,
-				moveDir,
-				distToTarget,
-				tostring(self._currentAnimationState)
-			)
+				self:_DebugLog(
+					"WALK track while near-stationary speed=%.2f moveDir=%.2f distToTarget=%.2f state=%s",
+					speed,
+					moveDir,
+					distToTarget,
+					tostring(self._currentAnimationState)
+				)
+			end
 		end
 	end
 
@@ -374,17 +398,59 @@ function NPCController:_PickNextBaseBehavior()
 end
 
 function NPCController:_PickPrimitiveBehavior(policy)
+	local maxDistance = self:_GetEffectiveMaxDistance(policy)
+
+	if self._assignedPoint and (not self._assignedPoint.instance or not self._assignedPoint.instance.Parent) then
+		self._assignedPoint = nil
+	end
+
 	if not self._assignedPoint and self._interestPointService then
 		self._assignedPoint = self._interestPointService:ClaimBestPointConstrained(self._id, policy.preferredPointTypes, {
 			origin = self._anchorPosition,
-			maxDistance = policy.maxTravelDistance,
+			maxDistance = maxDistance,
 			requireSeat = false
 		})
+
+		if not self._assignedPoint then
+			self._assignedPoint = self._interestPointService:ClaimBestPointConstrained(self._id, nil, {
+				origin = self._anchorPosition,
+				maxDistance = maxDistance,
+				requireSeat = false
+			})
+		end
+
+		if self._assignedPoint then
+			self:_DebugLog(
+				"PrimitiveAssigned point=%s type=%s maxDistance=%s",
+				self._assignedPoint.instance and self._assignedPoint.instance.Name or "?",
+				tostring(self._assignedPoint.type),
+				tostring(maxDistance)
+			)
+		end
 	end
 
 	if self._assignedPoint then
+		local target = self:GetInterestPointTargetPosition(self._assignedPoint)
+		local approachRadius = self._assignedPoint.approachRadius or 4
+		if target and not self:IsNearPosition(target, approachRadius + 1) and NPCIntelligenceTiers.CanPerform(policy, "WALK_NEAR") then
+			self:_DebugLog(
+				"PrimitiveWalk point=%s target=(%.1f, %.1f, %.1f)",
+				self._assignedPoint.instance and self._assignedPoint.instance.Name or "?",
+				target.X,
+				target.Y,
+				target.Z
+			)
+			self._activePoint = self._assignedPoint
+			self._stateMachine:SetBaseBehavior(WalkToInterestPoint.new(), {
+				point = self._assignedPoint,
+				timeout = 10
+			})
+			return
+		end
+
 		local shouldSit = self._assignedPoint.seat and NPCIntelligenceTiers.CanPerform(policy, "SIT") and math.random() < policy.sitBias
 		if shouldSit then
+			self:_DebugLog("PrimitiveSit point=%s", self._assignedPoint.instance and self._assignedPoint.instance.Name or "?")
 			self._activePoint = self._assignedPoint
 			self._stateMachine:SetBaseBehavior(SitAtInterestPoint.new(), {
 				point = self._assignedPoint,
@@ -392,6 +458,17 @@ function NPCController:_PickPrimitiveBehavior(policy)
 				duration = NPCIntelligenceTiers.RandomDuration(policy.sitDurationRange)
 			})
 			return
+		end
+
+		self:_DebugLog("PrimitiveIdleNear point=%s", self._assignedPoint.instance and self._assignedPoint.instance.Name or "?")
+	else
+		if tick() - self._lastPrimitiveMissLogAt > 2.0 then
+			self._lastPrimitiveMissLogAt = tick()
+			self:_DebugLog(
+				"PrimitiveNoPoint maxDistance=%s anchor=%s",
+				tostring(maxDistance),
+				self._anchorPosition and string.format("(%.1f, %.1f, %.1f)", self._anchorPosition.X, self._anchorPosition.Y, self._anchorPosition.Z) or "nil"
+			)
 		end
 	end
 
@@ -405,18 +482,31 @@ function NPCController:_ClaimPointForPolicy(policy)
 		return nil
 	end
 
+	local maxDistance = self:_GetEffectiveMaxDistance(policy)
+
 	local constraints = {
 		origin = self._anchorPosition,
-		maxDistance = policy.maxTravelDistance,
+		maxDistance = maxDistance,
 		requireSeat = false,
 		avoidPoint = self._lastPoint and self._lastPoint.instance or nil
 	}
 
-	if policy.allowDynamicRetarget and self._root then
+	if not maxDistance and policy.allowDynamicRetarget and self._root then
 		constraints.origin = self._root.Position
 	end
 
 	return self._interestPointService:ClaimBestPointConstrained(self._id, policy.preferredPointTypes, constraints)
+end
+
+function NPCController:_GetEffectiveMaxDistance(policy)
+	local policyDistance = policy and policy.maxTravelDistance or nil
+	local leashDistance = self._spawnLeashRadius
+
+	if policyDistance and leashDistance then
+		return math.min(policyDistance, leashDistance)
+	end
+
+	return policyDistance or leashDistance
 end
 
 function NPCController:_SetBehaviorFromPoint(policy, point)
@@ -675,6 +765,78 @@ function NPCController:FaceDirection(direction)
 
 	local target = self._root.Position + horizontal.Unit
 	self._root.CFrame = CFrame.new(self._root.Position, target)
+end
+
+function NPCController:ShowWitnessComment(text, duration)
+	if not self._model or not self._model.Parent then
+		return false
+	end
+
+	if tick() - self._lastWitnessCommentAt < 1.8 then
+		return false
+	end
+
+	local head = self._model:FindFirstChild("Head")
+	if not head or not head:IsA("BasePart") then
+		return false
+	end
+
+	local line = tostring(text or "...")
+	if #line <= 0 then
+		return false
+	end
+
+	for _, child in ipairs(head:GetChildren()) do
+		if child.Name == WITNESS_BUBBLE_NAME and child:IsA("BillboardGui") then
+			child:Destroy()
+		end
+	end
+
+	local bubble = Instance.new("BillboardGui")
+	bubble.Name = WITNESS_BUBBLE_NAME
+	bubble.Size = UDim2.new(0, 190, 0, 48)
+	bubble.StudsOffset = Vector3.new(0, 3.5, 0)
+	bubble.AlwaysOnTop = true
+	bubble.MaxDistance = 55
+	bubble.Parent = head
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.fromScale(1, 1)
+	frame.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+	frame.BackgroundTransparency = 0.18
+	frame.BorderSizePixel = 0
+	frame.Parent = bubble
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 10)
+	corner.Parent = frame
+
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Size = UDim2.new(1, -12, 1, -10)
+	textLabel.Position = UDim2.new(0, 6, 0, 5)
+	textLabel.BackgroundTransparency = 1
+	textLabel.Font = Enum.Font.GothamMedium
+	textLabel.TextSize = 14
+	textLabel.TextColor3 = Color3.fromRGB(245, 245, 245)
+	textLabel.TextWrapped = true
+	textLabel.TextXAlignment = Enum.TextXAlignment.Center
+	textLabel.TextYAlignment = Enum.TextYAlignment.Center
+	textLabel.Text = line
+	textLabel.Parent = frame
+
+	local measured = TextService:GetTextSize(line, 14, Enum.Font.GothamMedium, Vector2.new(180, 500))
+	bubble.Size = UDim2.new(0, 190, 0, math.clamp(measured.Y + 18, 38, 92))
+
+	local lifetime = math.max(1.2, tonumber(duration) or 2.5)
+	self._lastWitnessCommentAt = tick()
+	task.delay(lifetime, function()
+		if bubble and bubble.Parent then
+			bubble:Destroy()
+		end
+	end)
+
+	self:_DebugLog("WitnessComment '%s'", line)
+	return true
 end
 
 return NPCController

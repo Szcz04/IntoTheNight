@@ -2,7 +2,7 @@
 	MainClient: Client systems info
 	
 	All client systems run independently:
-		- SanityEffects.client.lua (visual/audio effects)
+		- SuspicionEffects.client.lua (visual/audio effects)
 		- MovementControls.client.lua (sprint/crouch)
 		- InventorySystem.client.lua (complete inventory solution with tooltips)
 		- CameraSetup.client.lua (first person camera)

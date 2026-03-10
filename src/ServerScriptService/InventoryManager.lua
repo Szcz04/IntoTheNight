@@ -12,7 +12,7 @@
 	PROJECT DIRECTION NOTES:
 	- Inventory should prioritize sabotage tools and social deception props.
 	- TODO: keep core validation/placement logic, but consider simplifying UX if stealth pacing suffers.
-	- TODO: remove direct _G coupling (SanityManager) and inject dependency for suspicion/consumable effects.
+	- TODO: remove direct _G coupling (SuspicionManager) and inject dependency for suspicion/consumable effects.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -944,14 +944,14 @@ function InventoryManager:ConsumeItem(player, itemIndex)
 		return false
 	end
 	
-	-- Heal player's sanity
-	local sanityManager = _G.SanityManager
-	if sanityManager then
-		sanityManager:HealSanity(player, healAmount)
-		print(string.format("[InventoryManager] %s consumed %s (+%d sanity)", 
+	-- Reduce player's suspicion
+	local suspicionManager = _G.SuspicionManager
+	if suspicionManager then
+		suspicionManager:ReduceSuspicion(player, healAmount, "Consumed item")
+		print(string.format("[InventoryManager] %s consumed %s (-%d suspicion)", 
 			player.Name, itemDef.Name, healAmount))
 	else
-		warn("[InventoryManager] SanityManager not found!")
+		warn("[InventoryManager] SuspicionManager not found!")
 	end
 	
 	-- Remove consumed item from inventory

@@ -118,38 +118,38 @@ createCommand("/resetlevers", function(player)
 	end
 end, "Reset all lever progress")
 
-createCommand("/damagesanity", function(player, unfilteredMessage)
-	local sanityManager = _G.SanityManager
-	if sanityManager then
+createCommand("/addsuspicion", function(player, unfilteredMessage)
+	local suspicionManager = _G.SuspicionManager
+	if suspicionManager then
 		local amount = tonumber(string.match(unfilteredMessage, "%d+")) or 10
-		sanityManager:DamageSanity(player, amount)
-		print(string.format("[DevCommands] %s damaged sanity by %d", player.Name, amount))
+		suspicionManager:AddSuspicion(player, amount, "Dev command")
+		print(string.format("[DevCommands] %s added suspicion by %d", player.Name, amount))
 	else
-		warn("[DevCommands] SanityManager not available")
+		warn("[DevCommands] SuspicionManager not available")
 	end
-end, "Damage sanity (usage: /damagesanity [amount])")
+end, "Add suspicion (usage: /addsuspicion [amount])")
 
-createCommand("/healsanity", function(player, unfilteredMessage)
-	local sanityManager = _G.SanityManager
-	if sanityManager then
+createCommand("/reducesuspicion", function(player, unfilteredMessage)
+	local suspicionManager = _G.SuspicionManager
+	if suspicionManager then
 		local amount = tonumber(string.match(unfilteredMessage, "%d+")) or 10
-		sanityManager:HealSanity(player, amount)
-		print(string.format("[DevCommands] %s healed sanity by %d", player.Name, amount))
+		suspicionManager:ReduceSuspicion(player, amount, "Dev command")
+		print(string.format("[DevCommands] %s reduced suspicion by %d", player.Name, amount))
 	else
-		warn("[DevCommands] SanityManager not available")
+		warn("[DevCommands] SuspicionManager not available")
 	end
-end, "Heal sanity (usage: /healsanity [amount])")
+end, "Reduce suspicion (usage: /reducesuspicion [amount])")
 
-createCommand("/checksanity", function(player)
-	local sanityManager = _G.SanityManager
-	if sanityManager then
-		local sanity = sanityManager:GetSanity(player)
-		local level = sanityManager:GetLevel(player)
-		print(string.format("[DevCommands] %s sanity: %d (Level %d)", player.Name, sanity, level))
+createCommand("/checksuspicion", function(player)
+	local suspicionManager = _G.SuspicionManager
+	if suspicionManager then
+		local suspicion = suspicionManager:GetSuspicion(player)
+		local level = suspicionManager:GetLevel(player)
+		print(string.format("[DevCommands] %s suspicion: %d (Level %d)", player.Name, suspicion, level))
 	else
-		warn("[DevCommands] SanityManager not available")
+		warn("[DevCommands] SuspicionManager not available")
 	end
-end, "Check your sanity level")
+end, "Check your suspicion level")
 
 createCommand("/checkmovement", function(player)
 	local movementTracker = _G.MovementTracker
@@ -239,6 +239,27 @@ createCommand("/hostcmd", function(player, unfilteredMessage)
 		warn("[DevCommands] Failed to force host command (invalid name, system stopped, or command active)")
 	end
 end, "Force specific host command")
+
+createCommand("/hostevaldelay", function(player, unfilteredMessage)
+	local hostCommandSystem = _G.HostCommandSystem
+	if not hostCommandSystem then
+		warn("[DevCommands] HostCommandSystem not available")
+		return
+	end
+
+	local requested = tonumber(string.match(unfilteredMessage or "", "([%d%.]+)"))
+	if not requested then
+		local current = hostCommandSystem.GetEvaluationDelaySeconds and hostCommandSystem:GetEvaluationDelaySeconds() or 0
+		print(string.format("[DevCommands] %s host evaluation delay: %.2fs", player.Name, current))
+		return
+	end
+
+	if hostCommandSystem.SetEvaluationDelaySeconds and hostCommandSystem:SetEvaluationDelaySeconds(requested) then
+		print(string.format("[DevCommands] %s set host evaluation delay to %.2fs", player.Name, hostCommandSystem:GetEvaluationDelaySeconds()))
+	else
+		warn("[DevCommands] Failed to set host evaluation delay")
+	end
+end, "Get/set host evaluation delay (usage: /hostevaldelay [seconds])")
 
 createCommand("/npccount", function(player)
 	local npcManager = _G.NPCManager
@@ -433,6 +454,79 @@ createCommand("/npcdebuglogs", function(player, unfilteredMessage)
 	print(string.format("[DevCommands] %s set NPCDebugLogs=%s", player.Name, tostring(current)))
 end, "Toggle NPC debug logs (usage: /npcdebuglogs [on|off])")
 
+createCommand("/witnessdebug", function(player, unfilteredMessage)
+	local requested = string.match(string.lower(unfilteredMessage or ""), "^%S+%s+(%S+)$")
+	local current = Workspace:GetAttribute("WitnessDebugLogs") == true
+
+	if requested == "on" then
+		current = true
+	elseif requested == "off" then
+		current = false
+	else
+		current = not current
+	end
+
+	Workspace:SetAttribute("WitnessDebugLogs", current)
+	print(string.format("[DevCommands] %s set WitnessDebugLogs=%s", player.Name, tostring(current)))
+end, "Toggle witness debug logs (usage: /witnessdebug [on|off])")
+
+createCommand("/witnessstatus", function(player)
+	local witnessSystem = _G.WitnessSystem
+	if not witnessSystem then
+		warn("[DevCommands] WitnessSystem not available")
+		return
+	end
+
+	local sourceCount = witnessSystem.GetSourceCount and witnessSystem:GetSourceCount() or 0
+	local sourceIds = witnessSystem.GetSourceIds and witnessSystem:GetSourceIds() or {}
+	print(string.format("[DevCommands] %s witness status: %d registered source(s) [%s]", player.Name, sourceCount, table.concat(sourceIds, ", ")))
+end, "Check witness system source count")
+
+createCommand("/witnesssimulate", function(player, unfilteredMessage)
+	local witnessSystem = _G.WitnessSystem
+	if not witnessSystem then
+		warn("[DevCommands] WitnessSystem not available")
+		return
+	end
+
+	local amount = tonumber(string.match(unfilteredMessage or "", "(%d+)")) or 12
+	amount = math.clamp(amount, 1, 50)
+
+	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	local result = witnessSystem:ProcessSuspiciousAction({
+		actorPlayer = player,
+		actionType = "ManualWitnessTest",
+		actionContext = {
+			note = "dev-command"
+		},
+		worldPosition = root and root.Position or nil,
+		suspicionAmount = amount,
+		reason = "WitnessedManualTest"
+	})
+
+	print(string.format(
+		"[DevCommands] %s witness simulate: witnessed=%s, suspicionAmount=%d, witnesses=%d, throttled=%s, error=%s",
+		player.Name,
+		tostring(result.witnessed),
+		amount,
+		#(result.witnesses or {}),
+		tostring(result.throttled == true),
+		tostring(result.error)
+	))
+end, "Run witness pipeline test (usage: /witnesssimulate [amount])")
+
+createCommand("/printcameras", function(player)
+	local CollectionService = game:GetService("CollectionService")
+	local cameras = {}
+	for _, instance in ipairs(CollectionService:GetTagged("WitnessCamera")) do
+		if instance:IsA("BasePart") and instance.Parent then
+			table.insert(cameras, instance)
+			print(string.format("[DevCommands] WitnessCamera: %s", instance:GetFullName()))
+		end
+	end
+	print(string.format("[DevCommands] %s found %d WitnessCamera tag(s)", player.Name, #cameras))
+end, "Print all camera names to output")
+
 createCommand("/giveitems", function(player)
 	local inventoryManager = _G.InventoryManager
 	if inventoryManager then
@@ -509,4 +603,4 @@ createCommand("/spawnlockpick", function(player)
 end, "Spawn a lockpick in front of you")
 
 print("[DevCommands] All dev commands active!")
-print("Type command in chat: /startround /cutpower /restorepower /endround /timecheck /state /sequence /resetlevers /damagesanity /healsanity /checksanity /checkmovement /monitor /runstats /whisper /hostnext /hostcmd /npccount /npcsetcount /npcrespawn /npctiers /npctierweights /npcforcetier /npcdebug /npcdebuglogs /giveitems /clearinventory /spawnflashlight /spawnbattery /spawnkey /spawnmedkit /spawnlockpick")
+print("Type command in chat: /startround /cutpower /restorepower /endround /timecheck /state /sequence /resetlevers /addsuspicion /reducesuspicion /checksuspicion /checkmovement /monitor /runstats /whisper /hostnext /hostcmd /hostevaldelay /npccount /npcsetcount /npcrespawn /npctiers /npctierweights /npcforcetier /npcdebug /npcdebuglogs /witnessdebug /witnessstatus /witnesssimulate /giveitems /clearinventory /spawnflashlight /spawnbattery /spawnkey /spawnmedkit /spawnlockpick")

@@ -106,12 +106,12 @@ ItemDefinitions.Items = {
 		Width = 1,
 		Height = 1,
 		Color = Color3.fromRGB(200, 50, 50), -- Red
-		Description = "Restores 20 sanity. Small but fresh.",
+		Description = "Reduces suspicion by 20. Small but fresh.",
 		MaxStack = 1,
 		WorldModel = "AppleModel",
 		IsEquippable = false,
 		IsConsumable = true,
-		HealAmount = 20 -- Leczy 20 punktów sanity
+		HealAmount = 20 -- Redukuje 20 punktow podejrzenia
 	},
 	
 	[ItemDefinitions.ItemTypes.BREAD] = {
@@ -121,12 +121,12 @@ ItemDefinitions.Items = {
 		Width = 2,
 		Height = 1,
 		Color = Color3.fromRGB(210, 180, 140), -- Tan
-		Description = "Restores 35 sanity. Filling staple food.",
+		Description = "Reduces suspicion by 35. Filling staple food.",
 		MaxStack = 1,
 		WorldModel = "BreadModel",
 		IsEquippable = false,
 		IsConsumable = true,
-		HealAmount = 35 -- Leczy 35 punktów sanity
+		HealAmount = 35 -- Redukuje 35 punktow podejrzenia
 	},
 	
 	[ItemDefinitions.ItemTypes.CUPCAKE] = {
@@ -136,12 +136,12 @@ ItemDefinitions.Items = {
 		Width = 2,
 		Height = 2,
 		Color = Color3.fromRGB(150, 150, 150), -- Gray
-		Description = "Restores 60 sanity. Preserved nutrition.",
+		Description = "Reduces suspicion by 60. Preserved nutrition.",
 		MaxStack = 1,
 		WorldModel = "CupcakeModel",
 		IsEquippable = false,
 		IsConsumable = true,
-		HealAmount = 60 -- Leczy 60 punktów sanity
+		HealAmount = 60 -- Redukuje 60 punktow podejrzenia
 	},
 	
 	[ItemDefinitions.ItemTypes.CHOCOLATE] = {
@@ -151,12 +151,12 @@ ItemDefinitions.Items = {
 		Width = 1,
 		Height = 1,
 		Color = Color3.fromRGB(101, 67, 33), -- Brown
-		Description = "Restores 15 sanity. Sweet comfort.",
+		Description = "Reduces suspicion by 15. Sweet comfort.",
 		MaxStack = 1,
 		WorldModel = "ChocolateModel",
 		IsEquippable = false,
 		IsConsumable = true,
-		HealAmount = 15 -- Leczy 15 punktów sanity
+		HealAmount = 15 -- Redukuje 15 punktow podejrzenia
 	},
 	
 	[ItemDefinitions.ItemTypes.JUICE] = {
@@ -166,12 +166,12 @@ ItemDefinitions.Items = {
 		Width = 1,
 		Height = 2,
 		Color = Color3.fromRGB(100, 150, 255), -- Light blue
-		Description = "Restores 25 sanity. Refreshing hydration.",
+		Description = "Reduces suspicion by 25. Refreshing hydration.",
 		MaxStack = 1,
 		WorldModel = "JuiceModel",
 		IsEquippable = false,
 		IsConsumable = true,
-		HealAmount = 25 -- Leczy 25 punktów sanity
+		HealAmount = 25 -- Redukuje 25 punktow podejrzenia
 	}
 }
 

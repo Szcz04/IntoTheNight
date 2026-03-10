@@ -13,11 +13,12 @@ local POLICIES = {
 		allowedBehaviors = {
 			IDLE = true,
 			SIT = true,
+			WALK_NEAR = true,
 			LOOK = true,
 			LEAN = true
 		},
 		stayNearAssignedPoint = true,
-		maxTravelDistance = 18,
+		maxTravelDistance = 40,
 		idleBias = 0.85,
 		sitBias = 0.7,
 		allowDynamicRetarget = false,
